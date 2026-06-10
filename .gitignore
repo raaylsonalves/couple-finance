@@ -27,3 +27,5 @@ pnpm-debug.log*
 # Build
 dist/
 dist-ssr/
+
+.vercel

@@ -1,0 +1,7 @@
+{
+  "private": true,
+  "dependencies": {
+    "@supabase/supabase-js": "^2.105.3",
+    "firebase-admin": "^13.8.0"
+  }
+}
