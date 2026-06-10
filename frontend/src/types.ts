@@ -27,6 +27,21 @@ export interface NewExpense {
   is_credit: boolean;
 }
 
+export interface FixedExpense {
+  id: string;
+  user_id: string;
+  description: string;
+  amount: number;
+  category: string;
+  created_at: string;
+}
+
+export interface NewFixedExpense {
+  description: string;
+  amount: string;
+  category: string;
+}
+
 export interface CategoryMeta {
   label: string;
   icon: string;

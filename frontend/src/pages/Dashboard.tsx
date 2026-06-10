@@ -14,7 +14,7 @@ import {
   Users, User as UserIcon, Upload
 } from 'lucide-react';
 import { parseCSV } from '../lib/csvParser';
-import type { Transaction, Profile, NewExpense, CategoryMeta } from '../types';
+import type { Transaction, Profile, NewExpense, FixedExpense, NewFixedExpense, CategoryMeta } from '../types';
 
 const CATEGORIES: CategoryMeta[] = [
   { label: 'Alimentação', icon: '🍔', color: 'bg-orange-100 text-orange-700' },
@@ -52,6 +52,11 @@ const Dashboard = () => {
   const [incomeInput, setIncomeInput] = useState('');
   const [savedIncome, setSavedIncome] = useState(0);
   const [partnerIncome, setPartnerIncome] = useState(0);
+
+  const [fixedExpenses, setFixedExpenses] = useState<FixedExpense[]>([]);
+  const [showFixedModal, setShowFixedModal] = useState(false);
+  const [fixedTotal, setFixedTotal] = useState(0);
+  const [newFixed, setNewFixed] = useState<NewFixedExpense>({ description: '', amount: '', category: 'Outros' });
 
   const [newExpense, setNewExpense] = useState<NewExpense>({ description: '', amount: '', category: 'Outros', is_outing: false, is_credit: false });
 
@@ -159,9 +164,29 @@ const Dashboard = () => {
     fetchProfile();
   }, [user]);
 
+  const fetchFixedExpenses = async () => {
+    if (!user) return;
+    try {
+      const ids = viewFilter === 'couple' && partnerId
+        ? [user.id, partnerId]
+        : [user.id];
+
+      const { data } = await supabase
+        .from('fixed_expenses')
+        .select('*')
+        .in('user_id', ids)
+        .order('description');
+
+      const items = (data || []) as FixedExpense[];
+      setFixedExpenses(items);
+      setFixedTotal(items.reduce((sum, f) => sum + (Number(f.amount) || 0), 0));
+    } catch { }
+  };
+
   useEffect(() => {
     if (!user) return;
     fetchTransactions();
+    fetchFixedExpenses();
   }, [user, viewFilter, partnerId]);
 
   const fetchTransactions = async () => {
@@ -379,6 +404,34 @@ const Dashboard = () => {
     }
   };
 
+  const handleAddFixed = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const amount = parseFloat(newFixed.amount.replace(',', '.'));
+    if (isNaN(amount) || amount <= 0 || !newFixed.description.trim()) return;
+
+    const { error } = await supabase.from('fixed_expenses').insert([{
+      user_id: user?.id,
+      description: newFixed.description.trim(),
+      amount,
+      category: newFixed.category,
+    }]);
+
+    if (error) { alert('Erro ao adicionar gasto fixo: ' + error.message); return; }
+
+    setShowFixedModal(false);
+    setNewFixed({ description: '', amount: '', category: 'Outros' });
+    fetchFixedExpenses();
+  };
+
+  const handleDeleteFixed = async (id: string, amount: number) => {
+    if (!window.confirm('Excluir este gasto fixo?')) return;
+    const { error } = await supabase.from('fixed_expenses').delete().eq('id', id);
+    if (error) { alert('Erro ao excluir: ' + error.message); return; }
+
+    setFixedExpenses(prev => prev.filter(f => f.id !== id));
+    setFixedTotal(prev => prev - amount);
+  };
+
   const handleImportCSV = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -424,7 +477,8 @@ const Dashboard = () => {
   const budgetRemaining = savedBudget ? savedBudget - budgetUsed : null;
 
   const totalIncome = viewFilter === 'couple' ? savedIncome + partnerIncome : savedIncome;
-  const finalBalance = totalIncome - shownTotal;
+  const liquidIncome = totalIncome - fixedTotal;
+  const finalBalance = liquidIncome - shownTotal;
 
   return (
     <div className="min-h-screen flex flex-col p-6 max-w-md mx-auto relative">
@@ -649,10 +703,20 @@ const Dashboard = () => {
         </h2>
 
         {totalIncome > 0 && (
-          <div className="mb-4 flex gap-2 items-center">
-            <span className="text-xs bg-gray-100 px-2 py-1 rounded text-zinc-600">Renda: R$ {totalIncome.toFixed(2).replace('.', ',')}</span>
-            <span className={`text-xs px-2 py-1 rounded font-bold ${finalBalance >= 0 ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
-              Sobra: R$ {finalBalance.toFixed(2).replace('.', ',')}
+          <div className="mb-4 space-y-1">
+            <div className="flex gap-2 items-center flex-wrap">
+              <span className="text-xs bg-gray-100 px-2 py-1 rounded text-zinc-600">Renda: R$ {totalIncome.toFixed(2).replace('.', ',')}</span>
+              {fixedTotal > 0 && (
+                <span className="text-xs bg-red-100 text-red-700 px-2 py-1 rounded">Fixos: -R$ {fixedTotal.toFixed(2).replace('.', ',')}</span>
+              )}
+            </div>
+            {fixedTotal > 0 && (
+              <p className="text-xs text-zinc-500">
+                Renda Líquida: R$ {liquidIncome.toFixed(2).replace('.', ',')}
+              </p>
+            )}
+            <span className={`inline-block text-xs px-2 py-1 rounded font-bold ${finalBalance >= 0 ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+              {fixedTotal > 0 ? 'Livre:' : 'Sobra:'} R$ {finalBalance.toFixed(2).replace('.', ',')}
             </span>
           </div>
         )}
@@ -693,6 +757,54 @@ const Dashboard = () => {
             >
               Salvar
             </button>
+          </div>
+        )}
+      </div>
+
+      {/* Fixed Expenses Section */}
+      <div className="bg-white rounded-xl shadow-sm p-5 mb-6 border border-gray-100">
+        <div className="flex justify-between items-center mb-3">
+          <p className="text-sm font-semibold text-zinc-900">
+            📋 Gastos Fixos {fixedTotal > 0 && <span className="text-red-500 font-bold">R$ {fixedTotal.toFixed(2).replace('.', ',')}</span>}
+          </p>
+          <button
+            onClick={() => setShowFixedModal(true)}
+            className="text-xs text-nubank-light font-bold hover:underline"
+          >
+            + Adicionar
+          </button>
+        </div>
+
+        {fixedExpenses.length === 0 ? (
+          <p className="text-xs text-nubank-gray-dark">Nenhum gasto fixo cadastrado.</p>
+        ) : (
+          <div className="space-y-2">
+            {fixedExpenses.map(f => {
+              const cat = getCategoryMeta(f.category);
+              return (
+                <div key={f.id} className="flex items-center gap-3 py-2 border-b border-gray-50 last:border-0">
+                  <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm shrink-0 ${cat.color}`}>
+                    {cat.icon}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-semibold text-zinc-900 truncate">{f.description}</p>
+                    <p className="text-xs text-nubank-gray-dark">{cat.label}</p>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <p className="font-bold text-red-500 text-sm">
+                      -R$ {(Number(f.amount) || 0).toFixed(2).replace('.', ',')}
+                    </p>
+                    <button
+                      onClick={() => handleDeleteFixed(f.id, Number(f.amount) || 0)}
+                      className="text-gray-300 hover:text-red-400 transition-colors"
+                      title="Excluir"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
           </div>
         )}
       </div>
@@ -952,6 +1064,75 @@ const Dashboard = () => {
                 </div>
               )}
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Fixed Expense Modal */}
+      {showFixedModal && (
+        <div className="fixed inset-0 bg-black/60 flex items-end sm:items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-t-2xl sm:rounded-2xl w-full max-w-md p-6">
+            <div className="flex justify-between items-center mb-6">
+              <h3 className="text-xl font-bold text-zinc-900">Novo Gasto Fixo</h3>
+              <button onClick={() => { setShowFixedModal(false); setNewFixed({ description: '', amount: '', category: 'Outros' }); }} className="text-zinc-500 hover:text-zinc-900">
+                <X className="w-6 h-6" />
+              </button>
+            </div>
+
+            <form onSubmit={handleAddFixed} className="space-y-4">
+              <div>
+                <label className="block text-sm font-semibold text-zinc-700 mb-1">Descrição</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="Ex: Aluguel"
+                  value={newFixed.description}
+                  onChange={(e) => setNewFixed({ ...newFixed, description: e.target.value })}
+                  className="w-full bg-nubank-gray p-4 rounded-xl text-zinc-900 focus:outline-none focus:ring-2 focus:ring-nubank-light"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-semibold text-zinc-700 mb-1">Valor</label>
+                <div className="relative">
+                  <span className="absolute left-4 top-4 text-zinc-500 font-semibold">R$</span>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0.01"
+                    required
+                    placeholder="0,00"
+                    value={newFixed.amount}
+                    onChange={(e) => setNewFixed({ ...newFixed, amount: e.target.value })}
+                    className="w-full bg-nubank-gray p-4 pl-12 rounded-xl text-zinc-900 focus:outline-none focus:ring-2 focus:ring-nubank-light"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-semibold text-zinc-700 mb-2">Categoria</label>
+                <div className="grid grid-cols-4 gap-2">
+                  {CATEGORIES.map(cat => (
+                    <button
+                      key={cat.label}
+                      type="button"
+                      onClick={() => setNewFixed({ ...newFixed, category: cat.label })}
+                      className={`flex flex-col items-center gap-1 p-2 rounded-xl border-2 transition-all ${newFixed.category === cat.label ? 'border-nubank-light bg-nubank-light/5' : 'border-transparent bg-gray-50 hover:bg-gray-100'}`}
+                    >
+                      <span className="text-xl">{cat.icon}</span>
+                      <span className="text-xs text-center leading-tight">{cat.label}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <button
+                type="submit"
+                className="w-full bg-nubank-light text-white font-bold py-4 rounded-full mt-2 hover:bg-nubank-dark transition-colors"
+              >
+                Adicionar Gasto Fixo
+              </button>
+            </form>
           </div>
         </div>
       )}
