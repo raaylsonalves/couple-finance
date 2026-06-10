@@ -1,5 +1,5 @@
 import { initializeApp } from "firebase/app";
-import { getMessaging, getToken, isSupported } from "firebase/messaging";
+import { getMessaging, getToken, deleteToken, isSupported } from "firebase/messaging";
 
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -29,6 +29,9 @@ export async function requestNotificationPermission(): Promise<string | null> {
 
   const messaging = getMessaging(app);
   const vapidKey = import.meta.env.VITE_FIREBASE_VAPID_KEY as string;
+
+  // Limpa token anterior antes de tentar novo
+  try { await deleteToken(messaging); } catch {}
 
   const token = await getToken(messaging, {
     vapidKey,
