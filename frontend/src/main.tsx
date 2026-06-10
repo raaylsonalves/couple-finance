@@ -8,7 +8,6 @@ let deferredPrompt: Event | null = null;
 window.addEventListener('beforeinstallprompt', (e) => {
   e.preventDefault();
   deferredPrompt = e;
-  console.log('✅ beforeinstallprompt capturado');
 });
 
 (window as unknown as Record<string, unknown>).__installPrompt = {
@@ -17,9 +16,37 @@ window.addEventListener('beforeinstallprompt', (e) => {
 };
 
 if ('serviceWorker' in navigator) {
+  let swRegistration: ServiceWorkerRegistration;
+
   navigator.serviceWorker.register('/firebase-messaging-sw.js')
-    .then(() => console.log('✅ SW registrado'))
-    .catch(() => console.warn('Service worker registration failed'));
+    .then((reg) => {
+      swRegistration = reg;
+      console.log('✅ SW registrado');
+
+      if (reg.waiting) {
+        reg.waiting.postMessage({ type: 'SKIP_WAITING' });
+      }
+
+      reg.addEventListener('updatefound', () => {
+        const newSW = reg.installing;
+        if (newSW) {
+          newSW.addEventListener('statechange', () => {
+            if (newSW.state === 'installed' && navigator.serviceWorker.controller) {
+              newSW.postMessage({ type: 'SKIP_WAITING' });
+            }
+          });
+        }
+      });
+    })
+    .catch(() => console.warn('SW registration failed'));
+
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    window.location.reload();
+  });
+
+  setInterval(() => {
+    if (swRegistration) swRegistration.update();
+  }, 30 * 60 * 1000);
 }
 
 createRoot(document.getElementById('root')!).render(

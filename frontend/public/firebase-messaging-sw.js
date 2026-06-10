@@ -1,4 +1,4 @@
-const CACHE = "casal-finance-v1";
+const CACHE = "casal-finance-cv1";
 const ASSETS = ["/", "/index.html", "/favicon.svg", "/icon-192x192.png", "/icon-512x512.png"];
 
 self.addEventListener("install", (event) => {
@@ -15,20 +15,31 @@ self.addEventListener("activate", (event) => {
   self.clients.claim();
 });
 
+self.addEventListener("message", (event) => {
+  if (event.data?.type === "SKIP_WAITING") {
+    self.skipWaiting();
+  }
+});
+
 self.addEventListener("fetch", (event) => {
+  if (event.request.method !== "GET") return;
+  if (event.request.url.includes("/api/")) return;
+
   event.respondWith(
     caches.match(event.request).then((cached) => {
-      if (cached) return cached;
-      return fetch(event.request).then((response) => {
-        if (response.ok && event.request.method === "GET") {
+      const fetchAndCache = fetch(event.request).then((response) => {
+        if (response.ok) {
           const clone = response.clone();
           caches.open(CACHE).then((cache) => cache.put(event.request, clone));
         }
         return response;
-      }).catch(() => {
-        if (event.request.mode === "navigate") return caches.match("/");
-        return new Response("Offline", { status: 503 });
       });
+
+      if (event.request.mode === "navigate") {
+        return fetchAndCache.catch(() => cached || new Response("Offline", { status: 503 }));
+      }
+
+      return cached || fetchAndCache.catch(() => new Response("Offline", { status: 503 }));
     })
   );
 });
