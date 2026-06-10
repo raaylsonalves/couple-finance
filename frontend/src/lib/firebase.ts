@@ -13,9 +13,6 @@ const firebaseConfig = {
 
 const app = initializeApp(firebaseConfig);
 
-let messaging: ReturnType<typeof getMessaging> | null = null;
-let swRegistration: ServiceWorkerRegistration | null = null;
-
 export async function requestNotificationPermission(): Promise<string | null> {
   const supported = await isSupported();
   if (!supported) {
@@ -27,20 +24,16 @@ export async function requestNotificationPermission(): Promise<string | null> {
     throw new Error("Notificações bloqueadas pelo usuário");
   }
 
-  if (!swRegistration) {
-    swRegistration = await navigator.serviceWorker.register("/firebase-messaging-sw.js");
+  try {
+    await navigator.serviceWorker.register("/firebase-messaging-sw.js");
+  } catch (e) {
+    console.warn("SW registration error:", e);
   }
 
-  if (!messaging) {
-    messaging = getMessaging(app);
-  }
-
+  const messaging = getMessaging(app);
   const vapidKey = import.meta.env.VITE_FIREBASE_VAPID_KEY as string;
 
-  const token = await getToken(messaging, {
-    vapidKey,
-    serviceWorkerRegistration: swRegistration,
-  });
+  const token = await getToken(messaging, { vapidKey });
 
   return token;
 }
