@@ -2,8 +2,7 @@ import { useState, useEffect, useRef, type ChangeEvent } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
-import { messaging } from '../lib/firebase';
-import { getToken } from 'firebase/messaging';
+import { requestNotificationPermission } from '../lib/firebase';
 import { isSupported } from 'firebase/messaging';
 import {
   Loader2, X, Bell, BellRing, LogOut, Heart, Trash2,
@@ -337,21 +336,9 @@ const Dashboard = () => {
   };
 
   const handleRequestPush = async () => {
-    const isDeviceSupported = await isSupported();
-    if (!isDeviceSupported) {
-      alert("Seu navegador ou dispositivo está bloqueando a geração do token. Certifique-se de acessar por 'https://' para celulares.");
-      return;
-    }
-
     try {
-      const permission = await Notification.requestPermission();
-      if (permission !== 'granted') {
-        alert('Notificações bloqueadas. Clique no cadeado na URL (ou nas configs do app no celular) para permitir.');
-        return;
-      }
-
       setPushStatusMsg('Gerando token...');
-      const token = await getToken(messaging!, { vapidKey: import.meta.env.VITE_FIREBASE_VAPID_KEY as string });
+      const token = await requestNotificationPermission();
       if (token) {
         await supabase.from('profiles').upsert({ id: user!.id, push_token: token }, { onConflict: 'id' });
         setPushEnabled(true);

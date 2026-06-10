@@ -1,6 +1,5 @@
 import { initializeApp } from "firebase/app";
-import { getMessaging } from "firebase/messaging";
-import { isSupported } from "firebase/messaging";
+import { getMessaging, getToken, isSupported } from "firebase/messaging";
 
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -14,12 +13,34 @@ const firebaseConfig = {
 
 const app = initializeApp(firebaseConfig);
 
-export let messaging: ReturnType<typeof getMessaging> | null = null;
+let messaging: ReturnType<typeof getMessaging> | null = null;
+let swRegistration: ServiceWorkerRegistration | null = null;
 
-isSupported().then((supported) => {
-  if (supported) {
-    messaging = getMessaging(app);
-  } else {
-    console.warn("Firebase Messaging não suportado: verifique se você está usando HTTPS ou Localhost.");
+export async function requestNotificationPermission(): Promise<string | null> {
+  const supported = await isSupported();
+  if (!supported) {
+    throw new Error("Push não suportado neste navegador/dispositivo");
   }
-}).catch(() => {});
+
+  const permission = await Notification.requestPermission();
+  if (permission !== "granted") {
+    throw new Error("Notificações bloqueadas pelo usuário");
+  }
+
+  if (!swRegistration) {
+    swRegistration = await navigator.serviceWorker.register("/firebase-messaging-sw.js");
+  }
+
+  if (!messaging) {
+    messaging = getMessaging(app);
+  }
+
+  const vapidKey = import.meta.env.VITE_FIREBASE_VAPID_KEY as string;
+
+  const token = await getToken(messaging, {
+    vapidKey,
+    serviceWorkerRegistration: swRegistration,
+  });
+
+  return token;
+}
