@@ -189,53 +189,58 @@ const Dashboard = () => {
     fetchFixedExpenses();
   }, [user, viewFilter, partnerId]);
 
+  const loadTransactions = async () => {
+    if (!user) return;
+    const ids = viewFilter === 'couple' && partnerId
+      ? [user.id, partnerId]
+      : [user.id];
+
+    const { data, error } = await supabase
+      .from('transactions')
+      .select('*')
+      .in('account_id', ids)
+      .order('date', { ascending: false })
+      .limit(50);
+
+    if (error) throw error;
+    setTransactions(data || []);
+
+    const { data: myData } = await supabase
+      .from('transactions')
+      .select('amount')
+      .eq('account_id', user.id);
+    const mySum = (myData || []).reduce((acc, t) => acc + (parseFloat(t.amount) || 0), 0);
+    setMyTotal(mySum);
+
+    let budgetUsedCalc = 0;
+
+    if (partnerId) {
+      const { data: coupleData } = await supabase
+        .from('transactions')
+        .select('amount, is_outing')
+        .in('account_id', [user.id, partnerId]);
+
+      const coupleSum = (coupleData || []).reduce((acc, t) => acc + (parseFloat(t.amount) || 0), 0);
+      budgetUsedCalc = (coupleData || []).filter(t => t.is_outing).reduce((acc, t) => acc + (parseFloat(t.amount) || 0), 0);
+
+      setCoupleTotal(coupleSum);
+    } else {
+      const { data: myOutingData } = await supabase
+        .from('transactions')
+        .select('amount, is_outing')
+        .eq('account_id', user.id);
+
+      budgetUsedCalc = (myOutingData || []).filter(t => t.is_outing).reduce((acc, t) => acc + (parseFloat(t.amount) || 0), 0);
+      setCoupleTotal(mySum);
+    }
+
+    setBudgetUsed(budgetUsedCalc);
+  };
+
   const fetchTransactions = async () => {
     setLoading(true);
     try {
-      const ids = viewFilter === 'couple' && partnerId
-        ? [user!.id, partnerId]
-        : [user!.id];
-
-      const { data, error } = await supabase
-        .from('transactions')
-        .select('*')
-        .in('account_id', ids)
-        .order('date', { ascending: false })
-        .limit(50);
-
-      if (error) throw error;
-      setTransactions(data || []);
-
-      const { data: myData } = await supabase
-        .from('transactions')
-        .select('amount')
-        .eq('account_id', user!.id);
-      const mySum = (myData || []).reduce((acc, t) => acc + (parseFloat(t.amount) || 0), 0);
-      setMyTotal(mySum);
-
-      let budgetUsedCalc = 0;
-
-      if (partnerId) {
-        const { data: coupleData } = await supabase
-          .from('transactions')
-          .select('amount, is_outing')
-          .in('account_id', [user!.id, partnerId]);
-
-        const coupleSum = (coupleData || []).reduce((acc, t) => acc + (parseFloat(t.amount) || 0), 0);
-        budgetUsedCalc = (coupleData || []).filter(t => t.is_outing).reduce((acc, t) => acc + (parseFloat(t.amount) || 0), 0);
-
-        setCoupleTotal(coupleSum);
-      } else {
-        const { data: myOutingData } = await supabase
-          .from('transactions')
-          .select('amount, is_outing')
-          .eq('account_id', user!.id);
-
-        budgetUsedCalc = (myOutingData || []).filter(t => t.is_outing).reduce((acc, t) => acc + (parseFloat(t.amount) || 0), 0);
-        setCoupleTotal(mySum);
-      }
-
-      setBudgetUsed(budgetUsedCalc);
+      await loadTransactions();
     } catch (err) {
       console.error('Erro ao buscar transações:', (err as Error).message);
     } finally {
@@ -274,11 +279,11 @@ const Dashboard = () => {
         setTransactions(prev => [data[0], ...prev]);
         setMyTotal(prev => prev + amount);
         setCoupleTotal(prev => prev + amount);
-        if (newExpense.is_outing) {
-          setBudgetUsed(prev => prev + amount);
-        }
+        if (newExpense.is_outing) setBudgetUsed(prev => prev + amount);
 
-        // Notificar parceiro via Vercel Function (só funciona em produção)
+        loadTransactions();
+        fetchFixedExpenses();
+
         if (import.meta.env.PROD) {
           fetch('/api/notify', {
             method: 'POST',
@@ -310,7 +315,8 @@ const Dashboard = () => {
     const val = amount || 0;
     if (ownerId === user!.id) setMyTotal(prev => prev - val);
     setCoupleTotal(prev => prev - val);
-    fetchTransactions();
+    loadTransactions();
+    fetchFixedExpenses();
   };
 
   const handleSavePartner = async () => {
@@ -423,13 +429,11 @@ const Dashboard = () => {
     fetchFixedExpenses();
   };
 
-  const handleDeleteFixed = async (id: string, amount: number) => {
+  const handleDeleteFixed = async (id: string) => {
     if (!window.confirm('Excluir este gasto fixo?')) return;
     const { error } = await supabase.from('fixed_expenses').delete().eq('id', id);
     if (error) { alert('Erro ao excluir: ' + error.message); return; }
-
-    setFixedExpenses(prev => prev.filter(f => f.id !== id));
-    setFixedTotal(prev => prev - amount);
+    fetchFixedExpenses();
   };
 
   const handleImportCSV = async (e: ChangeEvent<HTMLInputElement>) => {
@@ -461,7 +465,8 @@ const Dashboard = () => {
       if (error) throw error;
 
       setImportResult({ bankName: result.bankName, count: result.totalImported });
-      fetchTransactions();
+      loadTransactions();
+      fetchFixedExpenses();
     } catch (err) {
       setImportResult({ bankName: '?', count: 0, error: (err as Error).message });
     } finally {
@@ -795,7 +800,7 @@ const Dashboard = () => {
                       -R$ {(Number(f.amount) || 0).toFixed(2).replace('.', ',')}
                     </p>
                     <button
-                      onClick={() => handleDeleteFixed(f.id, Number(f.amount) || 0)}
+                      onClick={() => handleDeleteFixed(f.id)}
                       className="text-gray-300 hover:text-red-400 transition-colors"
                       title="Excluir"
                     >
