@@ -1,4 +1,9 @@
 import { useState, useEffect, useRef, type ChangeEvent } from 'react';
+
+interface BeforeInstallPromptEvent extends Event {
+  prompt: () => void;
+  userChoice: Promise<{ outcome: 'accepted' | 'dismissed' }>;
+}
 import { useAuth } from '../contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
@@ -61,6 +66,7 @@ const Dashboard = () => {
   const [myTotal, setMyTotal] = useState(0);
   const [coupleTotal, setCoupleTotal] = useState(0);
 
+  const [showInstallBanner, setShowInstallBanner] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
   const [importResult, setImportResult] = useState<{ bankName: string; count: number; error?: string } | null>(null);
   const [importing, setImporting] = useState(false);
@@ -75,6 +81,27 @@ const Dashboard = () => {
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
   }, []);
+
+  useEffect(() => {
+    const checkInstall = () => {
+      const ip = (window as unknown as Record<string, { prompt: Event | null; clear: () => void }>).__installPrompt;
+      if (ip && ip.prompt) setShowInstallBanner(true);
+    };
+    const interval = setInterval(checkInstall, 1000);
+    checkInstall();
+    return () => clearInterval(interval);
+  }, []);
+
+  const handleInstall = async () => {
+    const ip = (window as unknown as Record<string, { prompt: Event | null; clear: () => void }>).__installPrompt;
+    if (!ip || !ip.prompt) return;
+    (ip.prompt as BeforeInstallPromptEvent).prompt();
+    const result = await (ip.prompt as BeforeInstallPromptEvent).userChoice;
+    if (result.outcome === 'accepted') {
+      setShowInstallBanner(false);
+      ip.clear();
+    }
+  };
 
   useEffect(() => {
     if (!user) return;
@@ -496,6 +523,25 @@ const Dashboard = () => {
           </div>
         </div>
       </header>
+
+      {/* Install PWA Banner */}
+      {showInstallBanner && (
+        <div className="bg-gradient-to-r from-nubank-light to-purple-700 rounded-xl p-4 mb-4 flex items-center justify-between shadow-lg">
+          <div className="flex items-center gap-3">
+            <span className="text-2xl">📲</span>
+            <div>
+              <p className="text-white font-bold text-sm">Instalar App</p>
+              <p className="text-white/80 text-xs">Adicione à tela inicial</p>
+            </div>
+          </div>
+          <button
+            onClick={handleInstall}
+            className="bg-white text-nubank-light font-bold px-4 py-2 rounded-full text-xs hover:bg-white/90 transition-colors"
+          >
+            Instalar
+          </button>
+        </div>
+      )}
 
       {/* Partner Section */}
       {profileLoading ? (
