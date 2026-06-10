@@ -24,16 +24,16 @@ export async function requestNotificationPermission(): Promise<string | null> {
     throw new Error("Notificações bloqueadas pelo usuário");
   }
 
-  try {
-    await navigator.serviceWorker.register("/firebase-messaging-sw.js");
-  } catch (e) {
-    console.warn("SW registration error:", e);
-  }
+  const registration = await navigator.serviceWorker.register("/firebase-messaging-sw.js");
+  await navigator.serviceWorker.ready;
 
   const messaging = getMessaging(app);
   const vapidKey = import.meta.env.VITE_FIREBASE_VAPID_KEY as string;
 
-  const token = await getToken(messaging, { vapidKey });
+  const token = await getToken(messaging, {
+    vapidKey,
+    serviceWorkerRegistration: registration,
+  });
 
   return token;
 }
