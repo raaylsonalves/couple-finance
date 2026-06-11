@@ -189,6 +189,15 @@ const Dashboard = () => {
     fetchFixedExpenses();
   }, [user, viewFilter, partnerId]);
 
+  useEffect(() => {
+    if (!user) return;
+    const interval = setInterval(() => {
+      loadTransactions();
+      fetchFixedExpenses();
+    }, 30000);
+    return () => clearInterval(interval);
+  }, [user, viewFilter, partnerId]);
+
   const loadTransactions = async () => {
     if (!user) return;
     const ids = viewFilter === 'couple' && partnerId
@@ -255,6 +264,7 @@ const Dashboard = () => {
 
   const handleAddExpense = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSubmitting) return;
     setIsSubmitting(true);
     try {
       const amount = parseFloat(newExpense.amount.replace(',', '.'));
@@ -275,48 +285,39 @@ const Dashboard = () => {
 
       if (error) throw error;
 
-      if (data) {
-        setTransactions(prev => [data[0], ...prev]);
-        setMyTotal(prev => prev + amount);
-        setCoupleTotal(prev => prev + amount);
-        if (newExpense.is_outing) setBudgetUsed(prev => prev + amount);
-
-        loadTransactions();
-        fetchFixedExpenses();
-
-        if (import.meta.env.PROD) {
-          fetch('/api/notify', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              account_id: user?.id,
-              amount,
-              description: newExpense.description,
-            })
-          }).catch(() => {});
-        }
-      }
-
       setShowAddModal(false);
       setNewExpense({ description: '', amount: '', category: 'Outros', is_outing: false, is_credit: false });
+      await loadTransactions();
+      await fetchFixedExpenses();
+
+      if (import.meta.env.PROD && data) {
+        fetch('/api/notify', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            account_id: user?.id,
+            amount,
+            description: newExpense.description,
+          })
+        }).catch(() => {});
+      }
     } catch (err) {
-      alert('Erro ao adicionar gasto: ' + (err as Error).message);
+      if (!err.message.includes('isSubmitting')) {
+        alert('Erro ao adicionar gasto: ' + (err as Error).message);
+        await loadTransactions();
+        await fetchFixedExpenses();
+      }
     } finally {
       setIsSubmitting(false);
     }
   };
 
-  const handleDeleteExpense = async (id: number, amount: number, ownerId: string) => {
+  const handleDeleteExpense = async (id: number) => {
     if (!window.confirm('Excluir este gasto?')) return;
     const { error } = await supabase.from('transactions').delete().eq('id', id);
     if (error) { alert('Erro ao excluir: ' + error.message); return; }
-
-    setTransactions(prev => prev.filter(t => t.id !== id));
-    const val = amount || 0;
-    if (ownerId === user!.id) setMyTotal(prev => prev - val);
-    setCoupleTotal(prev => prev - val);
-    loadTransactions();
-    fetchFixedExpenses();
+    await loadTransactions();
+    await fetchFixedExpenses();
   };
 
   const handleSavePartner = async () => {
@@ -426,14 +427,14 @@ const Dashboard = () => {
 
     setShowFixedModal(false);
     setNewFixed({ description: '', amount: '', category: 'Outros' });
-    fetchFixedExpenses();
+    await fetchFixedExpenses();
   };
 
   const handleDeleteFixed = async (id: string) => {
     if (!window.confirm('Excluir este gasto fixo?')) return;
     const { error } = await supabase.from('fixed_expenses').delete().eq('id', id);
     if (error) { alert('Erro ao excluir: ' + error.message); return; }
-    fetchFixedExpenses();
+    await fetchFixedExpenses();
   };
 
   const handleImportCSV = async (e: ChangeEvent<HTMLInputElement>) => {
@@ -879,7 +880,7 @@ const Dashboard = () => {
                     </p>
                     {isOwn && (
                       <button
-                        onClick={() => handleDeleteExpense(t.id, t.amount, t.account_id)}
+                        onClick={() => handleDeleteExpense(t.id)}
                         className="text-gray-300 hover:text-red-400 transition-colors"
                         title="Excluir"
                       >
