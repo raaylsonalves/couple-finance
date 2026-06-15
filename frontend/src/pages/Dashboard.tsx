@@ -17,7 +17,7 @@ import { parseCSV } from '../lib/csvParser';
 import type { Transaction, Profile, NewExpense, FixedExpense, NewFixedExpense, CategoryMeta } from '../types';
 import { DonutChart } from '../components/DonutChart';
 
-const CATEGORIES: CategoryMeta[] = [
+const DEFAULT_CATEGORIES: CategoryMeta[] = [
   { label: 'Alimentação', icon: '🍔', color: 'bg-orange-100 text-orange-700' },
   { label: 'Transporte', icon: '🚗', color: 'bg-blue-100 text-blue-700' },
   { label: 'Saúde', icon: '🏥', color: 'bg-red-100 text-red-700' },
@@ -25,10 +25,13 @@ const CATEGORIES: CategoryMeta[] = [
   { label: 'Casa', icon: '🏠', color: 'bg-green-100 text-green-700' },
   { label: 'Educação', icon: '📚', color: 'bg-yellow-100 text-yellow-700' },
   { label: 'Roupas', icon: '👕', color: 'bg-pink-100 text-pink-700' },
+  { label: 'Assinaturas', icon: '📺', color: 'bg-cyan-100 text-cyan-700' },
+  { label: 'Animais', icon: '🐾', color: 'bg-teal-100 text-teal-700' },
+  { label: 'Presentes', icon: '🎁', color: 'bg-rose-100 text-rose-700' },
   { label: 'Outros', icon: '💳', color: 'bg-gray-100 text-gray-700' },
 ];
 
-const CATEGORY_COLORS: Record<string, string> = {
+const DEFAULT_COLORS: Record<string, string> = {
   'Alimentação': '#10B981',
   'Transporte': '#F97316',
   'Saúde': '#EF4444',
@@ -36,11 +39,47 @@ const CATEGORY_COLORS: Record<string, string> = {
   'Casa': '#3B82F6',
   'Educação': '#EC4899',
   'Roupas': '#F59E0B',
+  'Assinaturas': '#06B6D4',
+  'Animais': '#14B8A6',
+  'Presentes': '#F43F5E',
   'Outros': '#6B7280',
 };
 
-const getCategoryMeta = (label: string): CategoryMeta =>
-  CATEGORIES.find(c => c.label === label) || CATEGORIES[CATEGORIES.length - 1];
+const EMOJIS = ['🍔', '🚗', '🏥', '🎮', '🏠', '📚', '👕', '📺', '🐾', '🎁', '💳', '✈️', '🎵', '💻', '🏋️', '🌿', '🍕', '🐱', '🎬', '📱', '☕', '🎂', '👶', '🔧', '💊', '🎓', '🏪', '⚡', '💼', '🎪'];
+
+const PALETTE = [
+  '#10B981', '#F97316', '#EF4444', '#8B5CF6', '#3B82F6',
+  '#EC4899', '#F59E0B', '#06B6D4', '#14B8A6', '#F43F5E',
+  '#84CC16', '#6366F1', '#D946EF', '#0EA5E9', '#EAB308',
+];
+
+const STORAGE_KEY = 'custom_categories';
+
+function loadCustomCategories(): CategoryMeta[] {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch { return []; }
+}
+
+function saveCustomCategories(cats: CategoryMeta[]) {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(cats));
+}
+
+function getCategoryColors(custom: CategoryMeta[]): Record<string, string> {
+  const colors = { ...DEFAULT_COLORS };
+  custom.forEach((c, i) => { colors[c.label] = PALETTE[i % PALETTE.length]; });
+  return colors;
+}
+
+function getAllCategories(custom: CategoryMeta[]): CategoryMeta[] {
+  return [...DEFAULT_CATEGORIES, ...custom.filter(c => !DEFAULT_CATEGORIES.some(d => d.label === c.label))];
+}
+
+function getCategoryMeta(label: string, custom: CategoryMeta[]): CategoryMeta {
+  const all = getAllCategories(custom);
+  return all.find(c => c.label === label) || all[all.length - 1];
+}
 
 const Dashboard = () => {
   const { user, signOut } = useAuth();
@@ -88,8 +127,17 @@ const Dashboard = () => {
   const [importResult, setImportResult] = useState<{ bankName: string; count: number; error?: string } | null>(null);
   const [importing, setImporting] = useState(false);
   const [importIsCredit, setImportIsCredit] = useState(false);
+  const [customCategories, setCustomCategories] = useState<CategoryMeta[]>(loadCustomCategories);
+  const [showCategoryModal, setShowCategoryModal] = useState(false);
+  const [newCategoryLabel, setNewCategoryLabel] = useState('');
+  const [newCategoryEmoji, setNewCategoryEmoji] = useState('');
+  const [editingCategoryIndex, setEditingCategoryIndex] = useState<number | null>(null);
   const txRefreshRef = useRef(0);
   const fixedRefreshRef = useRef(0);
+
+  useEffect(() => {
+    saveCustomCategories(customCategories);
+  }, [customCategories]);
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -520,6 +568,11 @@ const Dashboard = () => {
     const cat = t.category || 'Outros';
     catTotalsMap[cat] = (catTotalsMap[cat] || 0) + (Number(t.amount) || 0);
   });
+  fixedExpenses.forEach(f => {
+    const cat = f.category || 'Outros';
+    catTotalsMap[cat] = (catTotalsMap[cat] || 0) + (Number(f.amount) || 0);
+  });
+  const categoryColors = getCategoryColors(customCategories);
   const monthTotal = Object.values(catTotalsMap).reduce((a, b) => a + b, 0);
   const donutSegments = Object.entries(catTotalsMap)
     .filter(([, v]) => v > 0)
@@ -527,7 +580,7 @@ const Dashboard = () => {
     .map(([label, value]) => ({
       label,
       value,
-      color: CATEGORY_COLORS[label] || '#6B7280',
+      color: categoryColors[label] || '#6B7280',
     }));
 
   return (
@@ -647,6 +700,12 @@ const Dashboard = () => {
               ))
             )}
           </div>
+          <button
+            onClick={() => { setNewCategoryLabel(''); setNewCategoryEmoji(EMOJIS[0]); setEditingCategoryIndex(null); setShowCategoryModal(true); }}
+            className="mt-3 w-full text-xs text-[#7C3AED] font-semibold hover:text-[#6D28D9] transition-colors"
+          >
+            + Gerenciar Categorias
+          </button>
         </div>
 
         {/* Quick Stats */}
@@ -851,7 +910,7 @@ const Dashboard = () => {
           ) : (
             <div className="space-y-1.5">
               {fixedExpenses.map(f => {
-                const cat = getCategoryMeta(f.category);
+                const cat = getCategoryMeta(f.category, customCategories);
                 return (
                   <div key={f.id} className="flex items-center gap-3 py-2 border-b border-gray-50 last:border-0">
                     <div className={'w-8 h-8 rounded-full flex items-center justify-center text-sm shrink-0 ' + cat.color}>
@@ -905,7 +964,7 @@ const Dashboard = () => {
           ) : (
             <div className="space-y-2">
               {transactions.map(t => {
-                const cat = getCategoryMeta(t.category);
+                const cat = getCategoryMeta(t.category, customCategories);
                 const isOwn = t.account_id === user?.id;
                 return (
                   <div key={t.id} className="bg-white p-4 rounded-xl shadow-sm flex items-center gap-3">
@@ -1002,7 +1061,7 @@ const Dashboard = () => {
               <div>
                 <label className="block text-sm font-semibold text-gray-700 mb-2">Categoria</label>
                 <div className="grid grid-cols-4 gap-2">
-                  {CATEGORIES.map(cat => (
+                  {getAllCategories(customCategories).map(cat => (
                     <button
                       key={cat.label}
                       type="button"
@@ -1151,7 +1210,7 @@ const Dashboard = () => {
               <div>
                 <label className="block text-sm font-semibold text-gray-700 mb-2">Categoria</label>
                 <div className="grid grid-cols-4 gap-2">
-                  {CATEGORIES.map(cat => (
+                  {getAllCategories(customCategories).map(cat => (
                     <button
                       key={cat.label}
                       type="button"
@@ -1171,6 +1230,99 @@ const Dashboard = () => {
                 Adicionar Gasto Fixo
               </button>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Category Management Modal */}
+      {showCategoryModal && (
+        <div className="fixed inset-0 bg-black/60 flex items-end sm:items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-t-2xl sm:rounded-2xl w-full max-w-md p-6">
+            <div className="flex justify-between items-center mb-6">
+              <h3 className="text-xl font-bold text-gray-900">Gerenciar Categorias</h3>
+              <button onClick={() => setShowCategoryModal(false)} className="text-gray-500 hover:text-gray-900">
+                <X className="w-6 h-6" />
+              </button>
+            </div>
+
+            {/* Existing custom categories */}
+            {customCategories.length > 0 && (
+              <div className="mb-4 space-y-2">
+                <p className="text-xs text-gray-500 font-semibold">Suas categorias personalizadas:</p>
+                {customCategories.map((cat, idx) => (
+                  <div key={idx} className="flex items-center justify-between bg-gray-50 p-3 rounded-xl">
+                    <div className="flex items-center gap-2">
+                      <span className="text-lg">{cat.icon}</span>
+                      <span className="text-sm font-medium text-gray-900">{cat.label}</span>
+                    </div>
+                    <button
+                      onClick={() => {
+                        const updated = customCategories.filter((_, i) => i !== idx);
+                        setCustomCategories(updated);
+                      }}
+                      className="text-red-400 hover:text-red-600 transition-colors"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Add new category form */}
+            <div className="border-t border-gray-100 pt-4">
+              <p className="text-sm font-semibold text-gray-700 mb-3">
+                {editingCategoryIndex !== null ? 'Editar categoria' : 'Nova categoria'}
+              </p>
+              <div className="space-y-3">
+                <input
+                  type="text"
+                  placeholder="Nome da categoria"
+                  value={newCategoryLabel}
+                  onChange={e => setNewCategoryLabel(e.target.value)}
+                  className="w-full bg-gray-50 p-3 rounded-xl text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#7C3AED]"
+                />
+                <div>
+                  <p className="text-xs text-gray-500 mb-2">Escolha um ícone:</p>
+                  <div className="flex flex-wrap gap-1.5 max-h-28 overflow-y-auto">
+                    {EMOJIS.map(emoji => (
+                      <button
+                        key={emoji}
+                        type="button"
+                        onClick={() => setNewCategoryEmoji(emoji)}
+                        className={'w-9 h-9 flex items-center justify-center text-lg rounded-lg border-2 transition-all ' + (newCategoryEmoji === emoji ? 'border-[#7C3AED] bg-purple-50' : 'border-transparent hover:bg-gray-100')}
+                      >
+                        {emoji}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => {
+                      if (!newCategoryLabel.trim()) return;
+                      const existing = getAllCategories(customCategories);
+                      if (existing.some(c => c.label.toLowerCase() === newCategoryLabel.trim().toLowerCase())) {
+                        alert('Já existe uma categoria com esse nome.');
+                        return;
+                      }
+                      const newCat: CategoryMeta = {
+                        label: newCategoryLabel.trim(),
+                        icon: newCategoryEmoji,
+                        color: 'bg-gray-100 text-gray-700',
+                      };
+                      setCustomCategories(prev => [...prev, newCat]);
+                      setNewCategoryLabel('');
+                      setNewCategoryEmoji(EMOJIS[0]);
+                    }}
+                    disabled={!newCategoryLabel.trim()}
+                    className="flex-1 bg-[#7C3AED] text-white font-semibold py-3 rounded-xl text-sm hover:bg-[#6D28D9] transition-colors disabled:opacity-50"
+                  >
+                    Adicionar
+                  </button>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       )}
