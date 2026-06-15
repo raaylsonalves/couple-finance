@@ -76,6 +76,7 @@ const Dashboard = () => {
   const [importResult, setImportResult] = useState<{ bankName: string; count: number; error?: string } | null>(null);
   const [importing, setImporting] = useState(false);
   const [importIsCredit, setImportIsCredit] = useState(false);
+  const refreshVersionRef = useRef(0);
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -166,6 +167,7 @@ const Dashboard = () => {
 
   const fetchFixedExpenses = async () => {
     if (!user) return;
+    const version = ++refreshVersionRef.current;
     try {
       const ids = viewFilter === 'couple' && partnerId
         ? [user.id, partnerId]
@@ -177,6 +179,7 @@ const Dashboard = () => {
         .in('user_id', ids)
         .order('description');
 
+      if (refreshVersionRef.current !== version) return;
       const items = (data || []) as FixedExpense[];
       setFixedExpenses(items);
       setFixedTotal(items.reduce((sum, f) => sum + (Number(f.amount) || 0), 0));
@@ -200,6 +203,7 @@ const Dashboard = () => {
 
   const loadTransactions = async () => {
     if (!user) return;
+    const version = ++refreshVersionRef.current;
     const ids = viewFilter === 'couple' && partnerId
       ? [user.id, partnerId]
       : [user.id];
@@ -212,12 +216,14 @@ const Dashboard = () => {
       .limit(50);
 
     if (error) throw error;
+    if (refreshVersionRef.current !== version) return;
     setTransactions(data || []);
 
     const { data: myData } = await supabase
       .from('transactions')
       .select('amount')
       .eq('account_id', user.id);
+    if (refreshVersionRef.current !== version) return;
     const mySum = (myData || []).reduce((acc, t) => acc + (parseFloat(t.amount) || 0), 0);
     setMyTotal(mySum);
 
@@ -228,6 +234,7 @@ const Dashboard = () => {
         .from('transactions')
         .select('amount, is_outing')
         .in('account_id', [user.id, partnerId]);
+      if (refreshVersionRef.current !== version) return;
 
       const coupleSum = (coupleData || []).reduce((acc, t) => acc + (parseFloat(t.amount) || 0), 0);
       budgetUsedCalc = (coupleData || []).filter(t => t.is_outing).reduce((acc, t) => acc + (parseFloat(t.amount) || 0), 0);
@@ -238,6 +245,7 @@ const Dashboard = () => {
         .from('transactions')
         .select('amount, is_outing')
         .eq('account_id', user.id);
+      if (refreshVersionRef.current !== version) return;
 
       budgetUsedCalc = (myOutingData || []).filter(t => t.is_outing).reduce((acc, t) => acc + (parseFloat(t.amount) || 0), 0);
       setCoupleTotal(mySum);
@@ -466,8 +474,8 @@ const Dashboard = () => {
       if (error) throw error;
 
       setImportResult({ bankName: result.bankName, count: result.totalImported });
-      loadTransactions();
-      fetchFixedExpenses();
+      await loadTransactions();
+      await fetchFixedExpenses();
     } catch (err) {
       setImportResult({ bankName: '?', count: 0, error: (err as Error).message });
     } finally {
