@@ -1,16 +1,16 @@
 @import "tailwindcss";
 
 @theme {
-  --color-nubank-dark: #530082;
-  --color-nubank-light: #8A05BE;
-  --color-nubank-gray: #F0F1F5;
-  --color-nubank-gray-dark: #737380;
+  --color-nubank-dark: #4C1D95;
+  --color-nubank-light: #7C3AED;
+  --color-nubank-gray: #F5F0FF;
+  --color-nubank-gray-dark: #6B7280;
   
   --font-family-sans: "Inter", "Roboto", sans-serif;
 }
 
 @layer base {
   body {
-    @apply bg-nubank-gray text-zinc-900;
+    @apply bg-[#F0EBFF] text-zinc-900;
   }
 }

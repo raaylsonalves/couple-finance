@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { parseCSV } from '../lib/csvParser';
 import type { Transaction, Profile, NewExpense, FixedExpense, NewFixedExpense, CategoryMeta } from '../types';
+import { DonutChart } from '../components/DonutChart';
 
 const CATEGORIES: CategoryMeta[] = [
   { label: 'Alimentação', icon: '🍔', color: 'bg-orange-100 text-orange-700' },
@@ -26,6 +27,17 @@ const CATEGORIES: CategoryMeta[] = [
   { label: 'Roupas', icon: '👕', color: 'bg-pink-100 text-pink-700' },
   { label: 'Outros', icon: '💳', color: 'bg-gray-100 text-gray-700' },
 ];
+
+const CATEGORY_COLORS: Record<string, string> = {
+  'Alimentação': '#10B981',
+  'Transporte': '#F97316',
+  'Saúde': '#EF4444',
+  'Lazer': '#8B5CF6',
+  'Casa': '#3B82F6',
+  'Educação': '#EC4899',
+  'Roupas': '#F59E0B',
+  'Outros': '#6B7280',
+};
 
 const getCategoryMeta = (label: string): CategoryMeta =>
   CATEGORIES.find(c => c.label === label) || CATEGORIES[CATEGORIES.length - 1];
@@ -76,7 +88,8 @@ const Dashboard = () => {
   const [importResult, setImportResult] = useState<{ bankName: string; count: number; error?: string } | null>(null);
   const [importing, setImporting] = useState(false);
   const [importIsCredit, setImportIsCredit] = useState(false);
-  const refreshVersionRef = useRef(0);
+  const txRefreshRef = useRef(0);
+  const fixedRefreshRef = useRef(0);
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -167,7 +180,7 @@ const Dashboard = () => {
 
   const fetchFixedExpenses = async () => {
     if (!user) return;
-    const version = ++refreshVersionRef.current;
+    const version = ++fixedRefreshRef.current;
     try {
       const ids = viewFilter === 'couple' && partnerId
         ? [user.id, partnerId]
@@ -179,7 +192,7 @@ const Dashboard = () => {
         .in('user_id', ids)
         .order('description');
 
-      if (refreshVersionRef.current !== version) return;
+      if (fixedRefreshRef.current !== version) return;
       const items = (data || []) as FixedExpense[];
       setFixedExpenses(items);
       setFixedTotal(items.reduce((sum, f) => sum + (Number(f.amount) || 0), 0));
@@ -203,7 +216,7 @@ const Dashboard = () => {
 
   const loadTransactions = async () => {
     if (!user) return;
-    const version = ++refreshVersionRef.current;
+    const version = ++txRefreshRef.current;
     const ids = viewFilter === 'couple' && partnerId
       ? [user.id, partnerId]
       : [user.id];
@@ -216,14 +229,14 @@ const Dashboard = () => {
       .limit(50);
 
     if (error) throw error;
-    if (refreshVersionRef.current !== version) return;
+    if (txRefreshRef.current !== version) return;
     setTransactions(data || []);
 
     const { data: myData } = await supabase
       .from('transactions')
       .select('amount')
       .eq('account_id', user.id);
-    if (refreshVersionRef.current !== version) return;
+    if (txRefreshRef.current !== version) return;
     const mySum = (myData || []).reduce((acc, t) => acc + (parseFloat(t.amount) || 0), 0);
     setMyTotal(mySum);
 
@@ -234,7 +247,7 @@ const Dashboard = () => {
         .from('transactions')
         .select('amount, is_outing')
         .in('account_id', [user.id, partnerId]);
-      if (refreshVersionRef.current !== version) return;
+      if (txRefreshRef.current !== version) return;
 
       const coupleSum = (coupleData || []).reduce((acc, t) => acc + (parseFloat(t.amount) || 0), 0);
       budgetUsedCalc = (coupleData || []).filter(t => t.is_outing).reduce((acc, t) => acc + (parseFloat(t.amount) || 0), 0);
@@ -245,7 +258,7 @@ const Dashboard = () => {
         .from('transactions')
         .select('amount, is_outing')
         .eq('account_id', user.id);
-      if (refreshVersionRef.current !== version) return;
+      if (txRefreshRef.current !== version) return;
 
       budgetUsedCalc = (myOutingData || []).filter(t => t.is_outing).reduce((acc, t) => acc + (parseFloat(t.amount) || 0), 0);
       setCoupleTotal(mySum);
@@ -494,421 +507,458 @@ const Dashboard = () => {
   const liquidIncome = totalIncome - fixedTotal;
   const finalBalance = liquidIncome - shownTotal;
 
+  const monthNames = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
+  const now = new Date();
+  const monthYear = monthNames[now.getMonth()] + ' de ' + now.getFullYear();
+
+  const catTotalsMap: Record<string, number> = {};
+  const currentMonthTx = transactions.filter(t => {
+    const d = new Date(t.date);
+    return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
+  });
+  currentMonthTx.forEach(t => {
+    const cat = t.category || 'Outros';
+    catTotalsMap[cat] = (catTotalsMap[cat] || 0) + (Number(t.amount) || 0);
+  });
+  const monthTotal = Object.values(catTotalsMap).reduce((a, b) => a + b, 0);
+  const donutSegments = Object.entries(catTotalsMap)
+    .filter(([, v]) => v > 0)
+    .sort(([, a], [, b]) => b - a)
+    .map(([label, value]) => ({
+      label,
+      value,
+      color: CATEGORY_COLORS[label] || '#6B7280',
+    }));
+
   return (
-    <div className="min-h-screen flex flex-col p-6 max-w-md mx-auto relative">
+    <div className="min-h-screen bg-[#F0EBFF]">
+      <div className="max-w-md mx-auto pb-28">
 
-      {/* Header */}
-      <header className="flex justify-between items-center mb-8">
-        <div>
-          <p className="text-sm text-nubank-gray-dark">Bem-vindo,</p>
-          <h1 className="text-2xl font-bold text-nubank-dark">{displayName}</h1>
-        </div>
-        <div className="flex items-center gap-3">
-          <div className="flex flex-col items-center">
-            <button
-              onClick={handleRequestPush}
-              className={`w-10 h-10 rounded-full flex items-center justify-center transition-colors ${pushEnabled ? 'bg-nubank-light text-white shadow-md' : 'bg-gray-200 text-gray-500'}`}
-              title={pushEnabled ? 'Notificações ativadas' : 'Ativar notificações'}
-            >
-              {pushEnabled ? <BellRing className="w-5 h-5" /> : <Bell className="w-5 h-5" />}
-            </button>
-            <span className={`text-[9px] font-semibold mt-1 whitespace-nowrap ${pushEnabled ? 'text-nubank-light' : pushStatusMsg.includes('Erro') || pushStatusMsg.includes('HTTPS') || pushStatusMsg.includes('Bloq') ? 'text-red-500' : 'text-zinc-400'}`}>
-              {pushStatusMsg}
-            </span>
-          </div>
+        {/* Header */}
+        <header className="bg-gradient-to-b from-[#7C3AED] to-[#6D28D9] pt-14 pb-7 px-6 rounded-b-[2.5rem] shadow-xl relative">
+          <div className="flex justify-between items-center mb-2">
+            <div>
+              <p className="text-white/70 text-xs font-medium">Olá,</p>
+              <h1 className="text-xl font-bold text-white">{displayName}</h1>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handleRequestPush}
+                className="w-9 h-9 bg-white/20 backdrop-blur-sm rounded-full flex items-center justify-center text-white hover:bg-white/30 transition-colors"
+              >
+                {pushEnabled ? <BellRing className="w-4 h-4" /> : <Bell className="w-4 h-4" />}
+              </button>
 
-          {/* Profile menu */}
-          <div className="relative" ref={profileMenuRef}>
-            <button
-              onClick={() => setShowProfileMenu(v => !v)}
-              className="w-10 h-10 bg-nubank-light rounded-full text-white flex items-center justify-center font-bold hover:bg-nubank-dark transition-colors"
-            >
-              {displayName.charAt(0).toUpperCase()}
-            </button>
+              <div className="relative" ref={profileMenuRef}>
+                <button
+                  onClick={() => setShowProfileMenu(v => !v)}
+                  className="w-9 h-9 bg-white/20 backdrop-blur-sm rounded-full flex items-center justify-center text-white font-bold text-sm hover:bg-white/30 transition-colors"
+                >
+                  {displayName.charAt(0).toUpperCase()}
+                </button>
 
-            {showProfileMenu && (
-              <div className="absolute right-0 mt-2 w-68 bg-white rounded-2xl shadow-xl z-50 overflow-hidden border border-gray-100">
-                <div className="p-4 bg-nubank-light/5 border-b border-gray-100">
-                  <p className="text-xs text-nubank-gray-dark">Logado como</p>
-                  <p className="text-sm font-semibold text-nubank-dark truncate">{user?.email}</p>
-                </div>
-                <div className="p-4 border-b border-gray-100">
-                  <p className="text-xs text-nubank-gray-dark mb-2">Seu apelido no app</p>
-                  <div className="flex gap-2">
-                    <input
-                      type="text"
-                      defaultValue={userDisplayName}
-                      placeholder="Ex: Raylson"
-                      id="display-name-input"
-                      className="flex-1 bg-nubank-gray p-2 rounded-lg text-sm focus:outline-none"
-                    />
+                {showProfileMenu && (
+                  <div className="absolute right-0 mt-3 w-68 bg-white rounded-2xl shadow-xl z-50 overflow-hidden border border-gray-100">
+                    <div className="p-4 bg-purple-50 border-b border-gray-100">
+                      <p className="text-xs text-gray-500">Logado como</p>
+                      <p className="text-sm font-semibold text-gray-900 truncate">{user?.email}</p>
+                    </div>
+                    <div className="p-4 border-b border-gray-100">
+                      <p className="text-xs text-gray-500 mb-2">Seu apelido no app</p>
+                      <div className="flex gap-2">
+                        <input
+                          type="text"
+                          defaultValue={userDisplayName}
+                          placeholder="Ex: Raylson"
+                          id="display-name-input"
+                          className="flex-1 bg-gray-100 p-2 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-purple-300"
+                        />
+                        <button
+                          onClick={() => {
+                            const val = (document.getElementById('display-name-input') as HTMLInputElement).value;
+                            handleSaveDisplayName(val);
+                            setShowProfileMenu(false);
+                          }}
+                          className="bg-[#7C3AED] text-white px-3 py-2 rounded-lg text-xs font-bold hover:bg-[#6D28D9]"
+                        >
+                          Salvar
+                        </button>
+                      </div>
+                    </div>
+                    <div className="p-4 border-b border-gray-100">
+                      <p className="text-xs text-gray-500 mb-2">Renda Mensal</p>
+                      <div className="flex flex-col gap-2">
+                        <div className="relative">
+                          <span className="absolute left-3 top-2.5 text-gray-500 text-sm">R$</span>
+                          <input
+                            type="number"
+                            step="0.01"
+                            placeholder="Ex: 5000"
+                            value={incomeInput}
+                            onChange={e => setIncomeInput(e.target.value)}
+                            className="w-full bg-gray-100 p-2 pl-9 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-purple-300"
+                          />
+                        </div>
+                        {incomeInput && (
+                          <button
+                            onClick={handleSaveIncome}
+                            className="w-full bg-[#7C3AED] text-white px-3 py-2 rounded-lg text-xs font-bold hover:bg-[#6D28D9]"
+                          >
+                            Salvar Renda
+                          </button>
+                        )}
+                        {savedIncome > 0 && <p className="text-xs font-semibold text-green-600 mt-1">Registrado: R$ {savedIncome.toFixed(2).replace('.', ',')}</p>}
+                      </div>
+                    </div>
                     <button
-                      onClick={() => {
-                        const val = (document.getElementById('display-name-input') as HTMLInputElement).value;
-                        handleSaveDisplayName(val);
-                        setShowProfileMenu(false);
-                      }}
-                      className="bg-nubank-light text-white px-3 py-2 rounded-lg text-xs font-bold"
+                      onClick={handleSignOut}
+                      className="w-full flex items-center gap-3 p-4 text-sm text-red-500 font-semibold hover:bg-red-50 transition-colors"
                     >
-                      Salvar
+                      <LogOut className="w-4 h-4" />
+                      Sair da conta
                     </button>
                   </div>
-                </div>
-                <div className="p-4 border-b border-gray-100">
-                  <p className="text-xs text-nubank-gray-dark mb-2">Renda Mensal</p>
-                  <div className="flex flex-col gap-2">
-                    <div className="relative">
-                      <span className="absolute left-3 top-2.5 text-zinc-500 text-sm">R$</span>
-                      <input
-                        type="number"
-                        step="0.01"
-                        placeholder="Ex: 5000"
-                        value={incomeInput}
-                        onChange={e => setIncomeInput(e.target.value)}
-                        className="w-full bg-nubank-gray p-2 pl-9 rounded-lg text-sm focus:outline-none"
-                      />
-                    </div>
-                    {incomeInput && (
-                      <button
-                        onClick={handleSaveIncome}
-                        className="w-full bg-nubank-light text-white px-3 py-2 rounded-lg text-xs font-bold"
-                      >
-                        Salvar Renda
-                      </button>
-                    )}
-                    {savedIncome > 0 && <p className="text-xs font-semibold text-green-600 mt-1">Registrado: R$ {savedIncome.toFixed(2).replace('.', ',')}</p>}
-                  </div>
-                </div>
-                <button
-                  onClick={handleSignOut}
-                  className="w-full flex items-center gap-3 p-4 text-sm text-red-500 font-semibold hover:bg-red-50 transition-colors"
-                >
-                  <LogOut className="w-4 h-4" />
-                  Sair da conta
-                </button>
+                )}
               </div>
+            </div>
+          </div>
+          <p className="text-white/50 text-[10px]">{pushStatusMsg}</p>
+        </header>
+
+        {/* Donut Chart Card */}
+        <div className="mx-4 -mt-7 bg-white rounded-2xl shadow-lg p-5 mb-4">
+          <div className="flex justify-center mb-3">
+            <DonutChart segments={donutSegments} total={monthTotal} monthYear={monthYear} />
+          </div>
+          <div className="border-t border-gray-100 pt-3 space-y-1.5">
+            {donutSegments.length === 0 ? (
+              <p className="text-xs text-gray-400 text-center py-2">Nenhum gasto este mês</p>
+            ) : (
+              donutSegments.map(seg => (
+                <div key={seg.label} className="flex items-center justify-between py-0.5">
+                  <div className="flex items-center gap-2">
+                    <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: seg.color }} />
+                    <span className="text-sm text-gray-600">{seg.label}</span>
+                  </div>
+                  <span className="text-sm font-semibold text-gray-900">
+                    R$ {seg.value.toFixed(2).replace('.', ',')}
+                  </span>
+                </div>
+              ))
             )}
           </div>
         </div>
-      </header>
 
-      {/* Install PWA Banner */}
-      {showInstallBanner && (
-        <div className="bg-gradient-to-r from-nubank-light to-purple-700 rounded-xl p-4 mb-4 flex items-center justify-between shadow-lg">
-          <div className="flex items-center gap-3">
-            <span className="text-2xl">📲</span>
-            <div>
-              <p className="text-white font-bold text-sm">Instalar App</p>
-              <p className="text-white/80 text-xs">Adicione à tela inicial</p>
-            </div>
+        {/* Quick Stats */}
+        <div className="mx-4 grid grid-cols-3 gap-3 mb-4">
+          <div className="bg-white rounded-xl shadow-sm p-3">
+            <p className="text-[10px] text-gray-400 mb-0.5">Total</p>
+            <p className="text-base font-bold text-gray-900">R$ {shownTotal.toFixed(2).replace('.', ',')}</p>
           </div>
-          <button
-            onClick={handleInstall}
-            className="bg-white text-nubank-light font-bold px-4 py-2 rounded-full text-xs hover:bg-white/90 transition-colors"
-          >
-            Instalar
-          </button>
-        </div>
-      )}
-
-      {/* Partner Section */}
-      {profileLoading ? (
-        <div className="bg-white rounded-xl shadow-sm p-5 mb-6 border border-gray-100 flex gap-4 animate-pulse">
-          <div className="w-10 h-10 bg-gray-200 rounded-full shrink-0"></div>
-          <div className="flex-1 space-y-2 py-1">
-            <div className="h-4 bg-gray-200 rounded w-1/3"></div>
-            <div className="h-3 bg-gray-200 rounded w-1/2"></div>
+          <div className="bg-white rounded-xl shadow-sm p-3">
+            <p className="text-[10px] text-gray-400 mb-0.5">Renda Líq.</p>
+            <p className="text-base font-bold text-green-600">R$ {liquidIncome.toFixed(2).replace('.', ',')}</p>
+          </div>
+          <div className="bg-white rounded-xl shadow-sm p-3">
+            <p className="text-[10px] text-gray-400 mb-0.5">Saldo</p>
+            <p className="text-base font-bold" style={{ color: finalBalance >= 0 ? '#16A34A' : '#DC2626' }}>
+              R$ {finalBalance.toFixed(2).replace('.', ',')}
+            </p>
           </div>
         </div>
-      ) : !partnerProfile ? (
-        <div className="bg-white rounded-xl shadow-sm p-5 mb-6 border-2 border-dashed border-nubank-light/30">
-          <div className="flex items-center gap-2 mb-3">
-            <Heart className="w-4 h-4 text-nubank-light" />
-            <p className="text-sm font-semibold text-zinc-900">Sem parceiro vinculado</p>
-          </div>
-          <p className="text-xs text-nubank-gray-dark mb-3">Cole o ID do seu parceiro para compartilhar gastos.</p>
-          <div className="flex gap-2">
-            <input
-              type="text"
-              placeholder="ID do parceiro"
-              value={partnerInput}
-              onChange={(e) => setPartnerInput(e.target.value)}
-              className="flex-1 bg-nubank-gray p-2 rounded-lg text-xs focus:outline-none"
-            />
+
+        {/* View Filter Tabs & Bank Connect */}
+        <div className="mx-4 flex gap-2 mb-4">
+          <div className="flex bg-white/80 backdrop-blur-sm rounded-xl p-1 gap-1 flex-1 shadow-sm border border-gray-100">
             <button
-              onClick={handleSavePartner}
-              disabled={isSubmitting}
-              className="bg-nubank-light text-white px-4 py-2 rounded-lg text-xs font-bold disabled:opacity-60"
+              onClick={() => setViewFilter('mine')}
+              className={(viewFilter === 'mine' ? 'bg-[#7C3AED] text-white shadow-sm' : 'text-gray-500 hover:text-gray-700') + ' flex-1 flex items-center justify-center gap-2 py-2 rounded-lg text-sm font-semibold transition-all'}
             >
-              Vincular
+              <UserIcon className="w-4 h-4" />
+              Meus Gastos
+            </button>
+            <button
+              onClick={() => setViewFilter('couple')}
+              disabled={!partnerProfile}
+              className={(viewFilter === 'couple' ? 'bg-[#7C3AED] text-white shadow-sm' : 'text-gray-500 hover:text-gray-700') + ' flex-1 flex items-center justify-center gap-2 py-2 rounded-lg text-sm font-semibold transition-all disabled:opacity-40'}
+            >
+              <Users className="w-4 h-4" />
+              Casal
             </button>
           </div>
-          <div className="mt-3 pt-3 border-t border-gray-100">
-            <p className="text-xs text-nubank-gray-dark mb-1">Seu ID:</p>
-            <div className="flex items-center gap-2">
-              <code className="bg-gray-100 p-1.5 rounded text-xs flex-1 break-all">{user?.id}</code>
-              <button onClick={() => navigator.clipboard.writeText(user?.id || '')} className="text-xs text-nubank-light font-bold whitespace-nowrap">
-                Copiar
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : (
-        <div className="bg-linear-to-r from-nubank-light/10 to-pink-50 rounded-xl p-5 mb-6 flex items-center justify-between border border-nubank-light/20">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-nubank-light/20 rounded-full flex items-center justify-center">
-              <Heart className="w-5 h-5 text-nubank-light" />
-            </div>
-            <div>
-              <p className="text-xs text-nubank-gray-dark">Pareado com</p>
-              <p className="text-sm font-bold text-nubank-dark">{partnerName}</p>
-            </div>
-          </div>
-          <button onClick={handleUnlinkPartner} className="text-xs text-red-400 font-semibold hover:text-red-600">
-            Desvincular
-          </button>
-        </div>
-      )}
-
-      {/* View Filter Tabs & Bank Connect */}
-      <div className="flex gap-2 mb-6">
-        <div className="flex bg-gray-100 rounded-xl p-1 gap-1 flex-1">
           <button
-            onClick={() => setViewFilter('mine')}
-            className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-lg text-sm font-semibold transition-all ${viewFilter === 'mine' ? 'bg-white shadow text-nubank-dark' : 'text-gray-500'}`}
+            onClick={() => setShowImportModal(true)}
+            title="Importar Extrato CSV"
+            className="w-11 h-11 bg-white rounded-xl shadow-sm border border-gray-100 flex items-center justify-center text-gray-500 hover:text-[#7C3AED] hover:border-purple-200 transition-colors shrink-0"
           >
-            <UserIcon className="w-4 h-4" />
-            Meus Gastos
-          </button>
-          <button
-            onClick={() => setViewFilter('couple')}
-            disabled={!partnerProfile}
-            className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-lg text-sm font-semibold transition-all disabled:opacity-40 ${viewFilter === 'couple' ? 'bg-white shadow text-nubank-dark' : 'text-gray-500'}`}
-          >
-            <Users className="w-4 h-4" />
-            Casal
+            <Upload className="w-4 h-4" />
           </button>
         </div>
 
-        <button
-          onClick={() => setShowImportModal(true)}
-          title="Importar Extrato CSV"
-          className="w-12 h-12 bg-gray-100 hover:bg-gray-200 rounded-xl flex items-center justify-center text-nubank-dark transition-colors shrink-0"
-        >
-          <Upload className="w-5 h-5" />
-        </button>
-      </div>
-
-      {/* Total + Budget */}
-      <div className="bg-white rounded-xl shadow-sm p-5 mb-6">
-        <div className="flex justify-between items-start mb-1">
-          <p className="text-sm text-nubank-gray-dark">
-            {viewFilter === 'couple' ? 'Total do Casal' : 'Meus Gastos'}
-          </p>
-          <button
-            onClick={() => setShowBudgetInput(v => !v)}
-            className="text-xs text-nubank-light font-semibold hover:underline"
-          >
-            {savedBudget ? 'Editar Limite' : '+ Definir Limite'}
-          </button>
-        </div>
-        <h2 className="text-3xl font-bold text-zinc-900 mb-1">
-          R$ {shownTotal.toFixed(2).replace('.', ',')}
-        </h2>
-
-        {totalIncome > 0 && (
-          <div className="mb-4 space-y-1">
-            <div className="flex gap-2 items-center flex-wrap">
-              <span className="text-xs bg-gray-100 px-2 py-1 rounded text-zinc-600">Renda: R$ {totalIncome.toFixed(2).replace('.', ',')}</span>
-              {fixedTotal > 0 && (
-                <span className="text-xs bg-red-100 text-red-700 px-2 py-1 rounded">Fixos: -R$ {fixedTotal.toFixed(2).replace('.', ',')}</span>
-              )}
+        {/* Budget Section */}
+        {savedBudget !== null ? (
+          <div className="mx-4 bg-white rounded-xl shadow-sm p-4 mb-4">
+            <div className="flex justify-between items-center mb-2">
+              <p className="text-xs text-gray-500">Limite do Mês</p>
+              <button onClick={() => setShowBudgetInput(v => !v)} className="text-[10px] text-[#7C3AED] font-semibold">Editar</button>
             </div>
-            {fixedTotal > 0 && (
-              <p className="text-xs text-zinc-500">
-                Renda Líquida: R$ {liquidIncome.toFixed(2).replace('.', ',')}
-              </p>
-            )}
-            <span className={`inline-block text-xs px-2 py-1 rounded font-bold ${finalBalance >= 0 ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
-              {fixedTotal > 0 ? 'Livre:' : 'Sobra:'} R$ {finalBalance.toFixed(2).replace('.', ',')}
-            </span>
-          </div>
-        )}
-
-        {budgetRemaining !== null && (
-          <div>
-            <div className="flex justify-between text-xs text-nubank-gray-dark mb-1">
-              <span>Limite: R$ {savedBudget!.toFixed(2).replace('.', ',')}</span>
-              <span className={budgetRemaining < 0 ? 'text-red-500 font-bold' : 'text-green-600 font-bold'}>
-                {budgetRemaining < 0 ? 'Acima do limite' : `Livre: R$ ${budgetRemaining.toFixed(2).replace('.', ',')}`}
+            <div className="flex justify-between text-xs text-gray-600 mb-1.5">
+              <span>R$ {budgetUsed.toFixed(2).replace('.', ',')} / R$ {savedBudget.toFixed(2).replace('.', ',')}</span>
+              <span className={'font-bold ' + (budgetRemaining! < 0 ? 'text-red-500' : 'text-green-600')}>
+                {budgetRemaining! < 0 ? '-' : ''}R$ {Math.abs(budgetRemaining!).toFixed(2).replace('.', ',')}
               </span>
             </div>
             <div className="w-full bg-gray-100 rounded-full h-2">
               <div
-                className={`h-2 rounded-full transition-all ${budgetUsedPct >= 100 ? 'bg-red-500' : budgetUsedPct >= 80 ? 'bg-orange-400' : 'bg-nubank-light'}`}
-                style={{ width: `${budgetUsedPct}%` }}
+                className={'h-2 rounded-full transition-all ' + (budgetUsedPct >= 100 ? 'bg-red-500' : budgetUsedPct >= 80 ? 'bg-orange-400' : 'bg-[#7C3AED]')}
+                style={{ width: budgetUsedPct + '%' }}
               />
             </div>
+            {showBudgetInput && (
+              <div className="mt-3 pt-3 border-t border-gray-100 flex gap-2">
+                <div className="relative flex-1">
+                  <span className="absolute left-3 top-2.5 text-gray-500 text-sm">R$</span>
+                  <input
+                    type="number"
+                    step="0.01"
+                    placeholder="Limite mensal"
+                    value={budget}
+                    onChange={e => setBudget(e.target.value)}
+                    className="w-full bg-gray-100 p-2 pl-9 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-purple-300"
+                  />
+                </div>
+                <button onClick={handleSaveBudget} className="bg-[#7C3AED] text-white px-4 py-2 rounded-lg text-sm font-bold">Salvar</button>
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="mx-4 bg-white rounded-xl shadow-sm p-4 mb-4">
+            <div className="flex items-center justify-between">
+              <p className="text-xs text-gray-500">Limite do Mês</p>
+              <button onClick={() => setShowBudgetInput(v => !v)} className="text-xs text-[#7C3AED] font-semibold">+ Definir Limite</button>
+            </div>
+            {showBudgetInput && (
+              <div className="mt-3 pt-3 border-t border-gray-100 flex gap-2">
+                <div className="relative flex-1">
+                  <span className="absolute left-3 top-2.5 text-gray-500 text-sm">R$</span>
+                  <input
+                    type="number"
+                    step="0.01"
+                    placeholder="Limite mensal"
+                    value={budget}
+                    onChange={e => setBudget(e.target.value)}
+                    className="w-full bg-gray-100 p-2 pl-9 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-purple-300"
+                  />
+                </div>
+                <button onClick={handleSaveBudget} className="bg-[#7C3AED] text-white px-4 py-2 rounded-lg text-sm font-bold">Salvar</button>
+              </div>
+            )}
           </div>
         )}
 
-        {showBudgetInput && (
-          <div className="mt-3 pt-3 border-t border-gray-100 flex gap-2">
-            <div className="relative flex-1">
-              <span className="absolute left-3 top-2.5 text-zinc-500 text-sm">R$</span>
-              <input
-                type="number"
-                step="0.01"
-                placeholder="Limite mensal"
-                value={budget}
-                onChange={e => setBudget(e.target.value)}
-                className="w-full bg-nubank-gray p-2 pl-9 rounded-lg text-sm focus:outline-none"
-              />
+        {/* Install PWA Banner */}
+        {showInstallBanner && (
+          <div className="mx-4 bg-gradient-to-r from-[#7C3AED] to-[#6D28D9] rounded-xl p-4 mb-4 flex items-center justify-between shadow-lg">
+            <div className="flex items-center gap-3">
+              <span className="text-2xl">📲</span>
+              <div>
+                <p className="text-white font-bold text-sm">Instalar App</p>
+                <p className="text-white/80 text-xs">Adicione à tela inicial</p>
+              </div>
             </div>
-            <button
-              onClick={handleSaveBudget}
-              className="bg-nubank-light text-white px-4 py-2 rounded-lg text-sm font-bold"
-            >
-              Salvar
+            <button onClick={handleInstall} className="bg-white text-[#7C3AED] font-bold px-4 py-2 rounded-full text-xs hover:bg-white/90 transition-colors">Instalar</button>
+          </div>
+        )}
+
+        {/* Partner Section */}
+        {profileLoading ? (
+          <div className="mx-4 bg-white rounded-xl shadow-sm p-4 mb-4 flex gap-3 animate-pulse">
+            <div className="w-10 h-10 bg-gray-200 rounded-full shrink-0"></div>
+            <div className="flex-1 space-y-2 py-1">
+              <div className="h-4 bg-gray-200 rounded w-1/3"></div>
+              <div className="h-3 bg-gray-200 rounded w-1/2"></div>
+            </div>
+          </div>
+        ) : !partnerProfile ? (
+          <div className="mx-4 bg-white rounded-xl shadow-sm p-4 mb-4 border-2 border-dashed border-purple-200">
+            <div className="flex items-center gap-2 mb-3">
+              <Heart className="w-4 h-4 text-[#7C3AED]" />
+              <p className="text-sm font-semibold text-gray-900">Sem parceiro vinculado</p>
+            </div>
+            <p className="text-xs text-gray-500 mb-3">Cole o ID do seu parceiro para compartilhar gastos.</p>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                placeholder="ID do parceiro"
+                value={partnerInput}
+                onChange={(e) => setPartnerInput(e.target.value)}
+                className="flex-1 bg-gray-100 p-2 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-purple-300"
+              />
+              <button onClick={handleSavePartner} disabled={isSubmitting} className="bg-[#7C3AED] text-white px-4 py-2 rounded-lg text-xs font-bold disabled:opacity-60">
+                Vincular
+              </button>
+            </div>
+            <div className="mt-3 pt-3 border-t border-gray-100">
+              <p className="text-xs text-gray-500 mb-1">Seu ID:</p>
+              <div className="flex items-center gap-2">
+                <code className="bg-gray-100 p-1.5 rounded text-xs flex-1 break-all">{user?.id}</code>
+                <button onClick={() => navigator.clipboard.writeText(user?.id || '')} className="text-xs text-[#7C3AED] font-bold whitespace-nowrap">Copiar</button>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="mx-4 bg-gradient-to-r from-purple-50 to-pink-50 rounded-xl p-4 mb-4 flex items-center justify-between border border-purple-100">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 bg-[#7C3AED]/10 rounded-full flex items-center justify-center">
+                <Heart className="w-5 h-5 text-[#7C3AED]" />
+              </div>
+              <div>
+                <p className="text-xs text-gray-500">Pareado com</p>
+                <p className="text-sm font-bold text-gray-900">{partnerName}</p>
+              </div>
+            </div>
+            <button onClick={handleUnlinkPartner} className="text-xs text-red-400 font-semibold hover:text-red-600">Desvincular</button>
+          </div>
+        )}
+
+        {/* Income Tags */}
+        {totalIncome > 0 && (
+          <div className="mx-4 mb-4 flex gap-2 items-center flex-wrap">
+            <span className="text-xs bg-white px-2.5 py-1 rounded-lg shadow-sm text-gray-700 font-medium">
+              Renda: R$ {totalIncome.toFixed(2).replace('.', ',')}
+            </span>
+            {fixedTotal > 0 && (
+              <span className="text-xs bg-red-50 text-red-700 px-2.5 py-1 rounded-lg shadow-sm font-medium">
+                Fixos: -R$ {fixedTotal.toFixed(2).replace('.', ',')}
+              </span>
+            )}
+          </div>
+        )}
+
+        {/* Fixed Expenses Section */}
+        <div className="mx-4 bg-white rounded-xl shadow-sm p-4 mb-4">
+          <div className="flex justify-between items-center mb-3">
+            <p className="text-sm font-semibold text-gray-900">
+              Gastos Fixos {fixedTotal > 0 && <span className="text-red-500 font-bold">R$ {fixedTotal.toFixed(2).replace('.', ',')}</span>}
+            </p>
+            <button onClick={() => setShowFixedModal(true)} className="text-xs text-[#7C3AED] font-bold hover:underline">
+              + Adicionar
             </button>
           </div>
-        )}
-      </div>
 
-      {/* Fixed Expenses Section */}
-      <div className="bg-white rounded-xl shadow-sm p-5 mb-6 border border-gray-100">
-        <div className="flex justify-between items-center mb-3">
-          <p className="text-sm font-semibold text-zinc-900">
-            📋 Gastos Fixos {fixedTotal > 0 && <span className="text-red-500 font-bold">R$ {fixedTotal.toFixed(2).replace('.', ',')}</span>}
-          </p>
-          <button
-            onClick={() => setShowFixedModal(true)}
-            className="text-xs text-nubank-light font-bold hover:underline"
-          >
-            + Adicionar
-          </button>
-        </div>
-
-        {fixedExpenses.length === 0 ? (
-          <p className="text-xs text-nubank-gray-dark">Nenhum gasto fixo cadastrado.</p>
-        ) : (
-          <div className="space-y-2">
-            {fixedExpenses.map(f => {
-              const cat = getCategoryMeta(f.category);
-              return (
-                <div key={f.id} className="flex items-center gap-3 py-2 border-b border-gray-50 last:border-0">
-                  <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm shrink-0 ${cat.color}`}>
-                    {cat.icon}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-semibold text-zinc-900 truncate">{f.description}</p>
-                    <p className="text-xs text-nubank-gray-dark">{cat.label}</p>
-                  </div>
-                  <div className="flex items-center gap-2 shrink-0">
-                    <p className="font-bold text-red-500 text-sm">
-                      -R$ {(Number(f.amount) || 0).toFixed(2).replace('.', ',')}
-                    </p>
-                    <button
-                      onClick={() => handleDeleteFixed(f.id)}
-                      className="text-gray-300 hover:text-red-400 transition-colors"
-                      title="Excluir"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
-
-      {/* Transaction List */}
-      <section className="flex-1 overflow-y-auto mb-6">
-        <div className="flex justify-between items-center mb-4">
-          <h3 className="font-semibold text-lg text-zinc-900">
-            {viewFilter === 'couple' ? 'Gastos do Casal' : 'Meus Gastos'}
-          </h3>
-          <span className="text-xs text-nubank-gray-dark">{transactions.length} itens</span>
-        </div>
-
-        {loading ? (
-          <div className="space-y-3">
-            {[1, 2, 3, 4, 5].map((i) => (
-              <div key={i} className="bg-white p-4 rounded-xl shadow-sm flex items-center gap-3 animate-pulse">
-                <div className="w-10 h-10 bg-gray-200 rounded-full shrink-0"></div>
-                <div className="flex-1 space-y-2">
-                  <div className="h-4 bg-gray-200 rounded w-3/4"></div>
-                  <div className="h-3 bg-gray-200 rounded w-1/2"></div>
-                </div>
-                <div className="h-4 bg-gray-200 rounded w-16"></div>
-              </div>
-            ))}
-          </div>
-        ) : transactions.length === 0 ? (
-          <div className="text-center py-10 bg-white rounded-xl shadow-sm">
-            <p className="text-nubank-gray-dark">Nenhum gasto registrado.</p>
-          </div>
-        ) : (
-          <div className="space-y-3">
-            {transactions.map(t => {
-              const cat = getCategoryMeta(t.category);
-              const isOwn = t.account_id === user?.id;
-              return (
-                <div key={t.id} className="bg-white p-4 rounded-xl shadow-sm flex items-center gap-3">
-                  <div className={`w-10 h-10 rounded-full flex items-center justify-center text-lg shrink-0 ${cat.color}`}>
-                    {cat.icon}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="font-semibold text-zinc-900 truncate">{t.description || 'Gasto sem nome'}</p>
-                    <div className="flex items-center gap-2">
-                      <p className="text-xs text-nubank-gray-dark">
-                        {t.date ? new Date(t.date).toLocaleDateString('pt-BR') : 'Hoje'}
+          {fixedExpenses.length === 0 ? (
+            <p className="text-xs text-gray-400">Nenhum gasto fixo cadastrado.</p>
+          ) : (
+            <div className="space-y-1.5">
+              {fixedExpenses.map(f => {
+                const cat = getCategoryMeta(f.category);
+                return (
+                  <div key={f.id} className="flex items-center gap-3 py-2 border-b border-gray-50 last:border-0">
+                    <div className={'w-8 h-8 rounded-full flex items-center justify-center text-sm shrink-0 ' + cat.color}>
+                      {cat.icon}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-semibold text-gray-900 truncate">{f.description}</p>
+                      <p className="text-xs text-gray-500">{cat.label}</p>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <p className="font-bold text-red-500 text-sm">
+                        -R$ {(Number(f.amount) || 0).toFixed(2).replace('.', ',')}
                       </p>
-                      {viewFilter === 'couple' && !isOwn && (
-                        <span className="text-xs bg-pink-100 text-pink-700 px-1.5 py-0.5 rounded-full">
-                          {partnerName?.split(' ')[0] || 'Parceiro'}
-                        </span>
-                      )}
-                      {t.account_provider && (
-                        <span className="text-xs bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded-full">
-                          {t.account_provider}
-                        </span>
-                      )}
-                      {t.is_credit && (
-                        <span className="text-xs bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded-full">
-                          💳 Crédito
-                        </span>
+                      <button onClick={() => handleDeleteFixed(f.id)} className="text-gray-300 hover:text-red-400 transition-colors" title="Excluir">
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* Transaction List */}
+        <section className="mx-4 mb-6">
+          <div className="flex justify-between items-center mb-3">
+            <h3 className="font-semibold text-sm text-gray-700">
+              {viewFilter === 'couple' ? 'Gastos do Casal' : 'Meus Gastos'}
+            </h3>
+            <span className="text-[10px] text-gray-400">{transactions.length} itens</span>
+          </div>
+
+          {loading ? (
+            <div className="space-y-2">
+              {[1, 2, 3, 4, 5].map((i) => (
+                <div key={i} className="bg-white p-4 rounded-xl shadow-sm flex items-center gap-3 animate-pulse">
+                  <div className="w-10 h-10 bg-gray-200 rounded-full shrink-0"></div>
+                  <div className="flex-1 space-y-2">
+                    <div className="h-4 bg-gray-200 rounded w-3/4"></div>
+                    <div className="h-3 bg-gray-200 rounded w-1/2"></div>
+                  </div>
+                  <div className="h-4 bg-gray-200 rounded w-16"></div>
+                </div>
+              ))}
+            </div>
+          ) : transactions.length === 0 ? (
+            <div className="text-center py-10 bg-white rounded-xl shadow-sm">
+              <p className="text-gray-400">Nenhum gasto registrado.</p>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {transactions.map(t => {
+                const cat = getCategoryMeta(t.category);
+                const isOwn = t.account_id === user?.id;
+                return (
+                  <div key={t.id} className="bg-white p-4 rounded-xl shadow-sm flex items-center gap-3">
+                    <div className={'w-10 h-10 rounded-full flex items-center justify-center text-lg shrink-0 ' + cat.color}>
+                      {cat.icon}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="font-semibold text-gray-900 truncate text-sm">{t.description || 'Gasto sem nome'}</p>
+                      <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                        <p className="text-xs text-gray-400">
+                          {t.date ? new Date(t.date).toLocaleDateString('pt-BR') : 'Hoje'}
+                        </p>
+                        {viewFilter === 'couple' && !isOwn && (
+                          <span className="text-[10px] bg-pink-100 text-pink-700 px-1.5 py-0.5 rounded-full font-medium">
+                            {partnerName?.split(' ')[0] || 'Parceiro'}
+                          </span>
+                        )}
+                        {t.account_provider && (
+                          <span className="text-[10px] bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded-full font-medium">
+                            {t.account_provider}
+                          </span>
+                        )}
+                        {t.is_credit && (
+                          <span className="text-[10px] bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded-full font-medium">
+                            Crédito
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <p className="font-bold text-red-500 text-sm">
+                        - R$ {(Number(t.amount) || 0).toFixed(2).replace('.', ',')}
+                      </p>
+                      {isOwn && (
+                        <button onClick={() => handleDeleteExpense(t.id)} className="text-gray-300 hover:text-red-400 transition-colors" title="Excluir">
+                          <Trash2 className="w-4 h-4" />
+                        </button>
                       )}
                     </div>
                   </div>
-                  <div className="flex items-center gap-2 shrink-0">
-                    <p className="font-bold text-red-500">
-                      - R$ {(Number(t.amount) || 0).toFixed(2).replace('.', ',')}
-                    </p>
-                    {isOwn && (
-                      <button
-                        onClick={() => handleDeleteExpense(t.id)}
-                        className="text-gray-300 hover:text-red-400 transition-colors"
-                        title="Excluir"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </section>
+                );
+              })}
+            </div>
+          )}
+        </section>
+      </div>
 
-      {/* Add Button */}
+      {/* FAB */}
       <button
         onClick={() => setShowAddModal(true)}
-        className="mt-auto bg-nubank-light text-white font-semibold py-4 rounded-full shadow-lg hover:bg-nubank-dark transition-colors active:scale-95 transform cursor-pointer"
+        className="fixed bottom-6 right-6 bg-gradient-to-r from-[#7C3AED] to-[#6D28D9] text-white font-semibold py-3.5 px-6 rounded-full shadow-xl hover:shadow-2xl hover:from-[#6D28D9] hover:to-[#5B21B6] transition-all active:scale-95 transform cursor-pointer z-40"
       >
-        + Adicionar Gasto
+        + Novo Gasto
       </button>
 
       {/* Add Expense Modal */}
@@ -916,29 +966,27 @@ const Dashboard = () => {
         <div className="fixed inset-0 bg-black/60 flex items-end sm:items-center justify-center p-4 z-50">
           <div className="bg-white rounded-t-2xl sm:rounded-2xl w-full max-w-md p-6">
             <div className="flex justify-between items-center mb-6">
-              <h3 className="text-xl font-bold text-zinc-900">Novo Gasto</h3>
-              <button onClick={() => setShowAddModal(false)} className="text-zinc-500 hover:text-zinc-900">
+              <h3 className="text-xl font-bold text-gray-900">Novo Gasto</h3>
+              <button onClick={() => setShowAddModal(false)} className="text-gray-500 hover:text-gray-900">
                 <X className="w-6 h-6" />
               </button>
             </div>
-
             <form onSubmit={handleAddExpense} className="space-y-4">
               <div>
-                <label className="block text-sm font-semibold text-zinc-700 mb-1">Descrição</label>
+                <label className="block text-sm font-semibold text-gray-700 mb-1">Descrição</label>
                 <input
                   type="text"
                   required
                   placeholder="Ex: Mercado"
                   value={newExpense.description}
                   onChange={(e) => setNewExpense({ ...newExpense, description: e.target.value })}
-                  className="w-full bg-nubank-gray p-4 rounded-xl text-zinc-900 focus:outline-none focus:ring-2 focus:ring-nubank-light"
+                  className="w-full bg-gray-50 p-4 rounded-xl text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#7C3AED]"
                 />
               </div>
-
               <div>
-                <label className="block text-sm font-semibold text-zinc-700 mb-1">Valor</label>
+                <label className="block text-sm font-semibold text-gray-700 mb-1">Valor</label>
                 <div className="relative">
-                  <span className="absolute left-4 top-4 text-zinc-500 font-semibold">R$</span>
+                  <span className="absolute left-4 top-4 text-gray-500 font-semibold">R$</span>
                   <input
                     type="number"
                     step="0.01"
@@ -947,20 +995,19 @@ const Dashboard = () => {
                     placeholder="0,00"
                     value={newExpense.amount}
                     onChange={(e) => setNewExpense({ ...newExpense, amount: e.target.value })}
-                    className="w-full bg-nubank-gray p-4 pl-12 rounded-xl text-zinc-900 focus:outline-none focus:ring-2 focus:ring-nubank-light"
+                    className="w-full bg-gray-50 p-4 pl-12 rounded-xl text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#7C3AED]"
                   />
                 </div>
               </div>
-
               <div>
-                <label className="block text-sm font-semibold text-zinc-700 mb-2">Categoria</label>
+                <label className="block text-sm font-semibold text-gray-700 mb-2">Categoria</label>
                 <div className="grid grid-cols-4 gap-2">
                   {CATEGORIES.map(cat => (
                     <button
                       key={cat.label}
                       type="button"
                       onClick={() => setNewExpense({ ...newExpense, category: cat.label })}
-                      className={`flex flex-col items-center gap-1 p-2 rounded-xl border-2 transition-all ${newExpense.category === cat.label ? 'border-nubank-light bg-nubank-light/5' : 'border-transparent bg-gray-50 hover:bg-gray-100'}`}
+                      className={(newExpense.category === cat.label ? 'border-[#7C3AED] bg-purple-50' : 'border-transparent bg-gray-50 hover:bg-gray-100') + ' flex flex-col items-center gap-1 p-2 rounded-xl border-2 transition-all'}
                     >
                       <span className="text-xl">{cat.icon}</span>
                       <span className="text-xs text-center leading-tight">{cat.label}</span>
@@ -968,39 +1015,32 @@ const Dashboard = () => {
                   ))}
                 </div>
               </div>
-
               <div className="flex gap-4 mb-4">
-                <div className="flex-1 flex items-center gap-3 bg-nubank-light/5 p-4 rounded-xl border border-nubank-light/20">
+                <div className="flex-1 flex items-center gap-3 bg-purple-50 p-4 rounded-xl border border-purple-200">
                   <input
                     type="checkbox"
                     id="is_outing_checkbox"
                     checked={newExpense.is_outing}
                     onChange={(e) => setNewExpense({ ...newExpense, is_outing: e.target.checked })}
-                    className="w-5 h-5 text-nubank-light rounded bg-white"
+                    className="w-5 h-5 text-[#7C3AED] rounded bg-white"
                   />
-                  <label htmlFor="is_outing_checkbox" className="text-sm font-semibold text-zinc-900 cursor-pointer">
-                    💰 Limite Saídas?
-                  </label>
+                  <label htmlFor="is_outing_checkbox" className="text-sm font-semibold text-gray-900 cursor-pointer">Limite Saídas?</label>
                 </div>
-
-                <div className="flex-1 flex items-center gap-3 bg-nubank-light/5 p-4 rounded-xl border border-nubank-light/20">
+                <div className="flex-1 flex items-center gap-3 bg-purple-50 p-4 rounded-xl border border-purple-200">
                   <input
                     type="checkbox"
                     id="is_credit_checkbox"
                     checked={newExpense.is_credit}
                     onChange={(e) => setNewExpense({ ...newExpense, is_credit: e.target.checked })}
-                    className="w-5 h-5 text-nubank-light rounded bg-white"
+                    className="w-5 h-5 text-[#7C3AED] rounded bg-white"
                   />
-                  <label htmlFor="is_credit_checkbox" className="text-sm font-semibold text-zinc-900 cursor-pointer">
-                    💳 Foi no Crédito?
-                  </label>
+                  <label htmlFor="is_credit_checkbox" className="text-sm font-semibold text-gray-900 cursor-pointer">Foi no Crédito?</label>
                 </div>
               </div>
-
               <button
                 type="submit"
                 disabled={isSubmitting}
-                className="w-full bg-nubank-light text-white font-bold py-4 rounded-full mt-2 hover:bg-nubank-dark transition-colors flex justify-center disabled:opacity-70"
+                className="w-full bg-gradient-to-r from-[#7C3AED] to-[#6D28D9] text-white font-bold py-4 rounded-full mt-2 hover:from-[#6D28D9] hover:to-[#5B21B6] transition-colors flex justify-center disabled:opacity-70"
               >
                 {isSubmitting ? <Loader2 className="w-5 h-5 animate-spin" /> : 'Confirmar Gasto'}
               </button>
@@ -1014,62 +1054,50 @@ const Dashboard = () => {
         <div className="fixed inset-0 bg-black/60 flex items-end sm:items-center justify-center p-4 z-50">
           <div className="bg-white rounded-t-2xl sm:rounded-2xl w-full max-w-md p-6">
             <div className="flex justify-between items-center mb-6">
-              <h3 className="text-xl font-bold text-zinc-900">Importar Extrato</h3>
-              <button onClick={() => { setShowImportModal(false); setImportResult(null); setImportIsCredit(false); }} className="text-zinc-500 hover:text-zinc-900">
+              <h3 className="text-xl font-bold text-gray-900">Importar Extrato</h3>
+              <button onClick={() => { setShowImportModal(false); setImportResult(null); setImportIsCredit(false); }} className="text-gray-500 hover:text-gray-900">
                 <X className="w-6 h-6" />
               </button>
             </div>
-
             <div className="space-y-4">
-              <p className="text-sm text-nubank-gray-dark">
-                Exporte o extrato CSV do seu banco e faça upload aqui. Formatos suportados:
-              </p>
+              <p className="text-sm text-gray-500">Exporte o extrato CSV do seu banco e faça upload aqui. Formatos suportados:</p>
               <div className="flex gap-2 flex-wrap">
                 <span className="text-xs bg-red-100 text-red-700 px-3 py-1 rounded-full font-semibold">Santander</span>
                 <span className="text-xs bg-orange-100 text-orange-700 px-3 py-1 rounded-full font-semibold">Inter</span>
                 <span className="text-xs bg-blue-100 text-blue-700 px-3 py-1 rounded-full font-semibold">Mercado Pago</span>
                 <span className="text-xs bg-gray-100 text-gray-700 px-3 py-1 rounded-full font-semibold">Outros CSV</span>
               </div>
-
               <label className="block mt-4">
-                <div className={`border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-colors ${importing ? 'border-gray-300 bg-gray-50' : 'border-nubank-light/40 hover:border-nubank-light hover:bg-nubank-light/5'}`}>
+                <div className={(importing ? 'border-gray-300 bg-gray-50' : 'border-purple-300 hover:border-[#7C3AED] hover:bg-purple-50') + ' border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-colors'}>
                   {importing ? (
                     <div className="flex flex-col items-center gap-2">
-                      <Loader2 className="w-8 h-8 animate-spin text-nubank-light" />
-                      <p className="text-sm text-nubank-gray-dark">Importando...</p>
+                      <Loader2 className="w-8 h-8 animate-spin text-[#7C3AED]" />
+                      <p className="text-sm text-gray-500">Importando...</p>
                     </div>
                   ) : (
                     <div className="flex flex-col items-center gap-2">
-                      <Upload className="w-8 h-8 text-nubank-light" />
-                      <p className="text-sm font-semibold text-zinc-900">Clique para selecionar o CSV</p>
-                      <p className="text-xs text-nubank-gray-dark">ou arraste o arquivo aqui</p>
+                      <Upload className="w-8 h-8 text-[#7C3AED]" />
+                      <p className="text-sm font-semibold text-gray-900">Clique para selecionar o CSV</p>
+                      <p className="text-xs text-gray-400">ou arraste o arquivo aqui</p>
                     </div>
                   )}
                 </div>
-                <input
-                  type="file"
-                  accept=".csv,.txt,.ofx"
-                  onChange={handleImportCSV}
-                  className="hidden"
-                  disabled={importing}
-                />
+                <input type="file" accept=".csv,.txt,.ofx" onChange={handleImportCSV} className="hidden" disabled={importing} />
               </label>
-
               <div className="flex items-center gap-3 mt-4 bg-purple-50 p-3 rounded-lg border border-purple-200">
                 <input
                   type="checkbox"
                   id="import_is_credit"
                   checked={importIsCredit}
                   onChange={(e) => setImportIsCredit(e.target.checked)}
-                  className="w-5 h-5 text-purple-600 rounded bg-white border-purple-300"
+                  className="w-5 h-5 text-[#7C3AED] rounded bg-white border-purple-300"
                 />
                 <label htmlFor="import_is_credit" className="text-sm font-semibold text-purple-900 cursor-pointer select-none flex-1">
                   💳 Este extrato é de uma Fatura de Cartão de Crédito?
                 </label>
               </div>
-
               {importResult && (
-                <div className={`p-4 rounded-xl text-sm ${importResult.error ? 'bg-red-50 text-red-700' : 'bg-green-50 text-green-700'}`}>
+                <div className={'p-4 rounded-xl text-sm ' + (importResult.error ? 'bg-red-50 text-red-700' : 'bg-green-50 text-green-700')}>
                   {importResult.error ? (
                     <p>❌ Erro: {importResult.error}</p>
                   ) : (
@@ -1087,29 +1115,27 @@ const Dashboard = () => {
         <div className="fixed inset-0 bg-black/60 flex items-end sm:items-center justify-center p-4 z-50">
           <div className="bg-white rounded-t-2xl sm:rounded-2xl w-full max-w-md p-6">
             <div className="flex justify-between items-center mb-6">
-              <h3 className="text-xl font-bold text-zinc-900">Novo Gasto Fixo</h3>
-              <button onClick={() => { setShowFixedModal(false); setNewFixed({ description: '', amount: '', category: 'Outros' }); }} className="text-zinc-500 hover:text-zinc-900">
+              <h3 className="text-xl font-bold text-gray-900">Novo Gasto Fixo</h3>
+              <button onClick={() => { setShowFixedModal(false); setNewFixed({ description: '', amount: '', category: 'Outros' }); }} className="text-gray-500 hover:text-gray-900">
                 <X className="w-6 h-6" />
               </button>
             </div>
-
             <form onSubmit={handleAddFixed} className="space-y-4">
               <div>
-                <label className="block text-sm font-semibold text-zinc-700 mb-1">Descrição</label>
+                <label className="block text-sm font-semibold text-gray-700 mb-1">Descrição</label>
                 <input
                   type="text"
                   required
                   placeholder="Ex: Aluguel"
                   value={newFixed.description}
                   onChange={(e) => setNewFixed({ ...newFixed, description: e.target.value })}
-                  className="w-full bg-nubank-gray p-4 rounded-xl text-zinc-900 focus:outline-none focus:ring-2 focus:ring-nubank-light"
+                  className="w-full bg-gray-50 p-4 rounded-xl text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#7C3AED]"
                 />
               </div>
-
               <div>
-                <label className="block text-sm font-semibold text-zinc-700 mb-1">Valor</label>
+                <label className="block text-sm font-semibold text-gray-700 mb-1">Valor</label>
                 <div className="relative">
-                  <span className="absolute left-4 top-4 text-zinc-500 font-semibold">R$</span>
+                  <span className="absolute left-4 top-4 text-gray-500 font-semibold">R$</span>
                   <input
                     type="number"
                     step="0.01"
@@ -1118,20 +1144,19 @@ const Dashboard = () => {
                     placeholder="0,00"
                     value={newFixed.amount}
                     onChange={(e) => setNewFixed({ ...newFixed, amount: e.target.value })}
-                    className="w-full bg-nubank-gray p-4 pl-12 rounded-xl text-zinc-900 focus:outline-none focus:ring-2 focus:ring-nubank-light"
+                    className="w-full bg-gray-50 p-4 pl-12 rounded-xl text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#7C3AED]"
                   />
                 </div>
               </div>
-
               <div>
-                <label className="block text-sm font-semibold text-zinc-700 mb-2">Categoria</label>
+                <label className="block text-sm font-semibold text-gray-700 mb-2">Categoria</label>
                 <div className="grid grid-cols-4 gap-2">
                   {CATEGORIES.map(cat => (
                     <button
                       key={cat.label}
                       type="button"
                       onClick={() => setNewFixed({ ...newFixed, category: cat.label })}
-                      className={`flex flex-col items-center gap-1 p-2 rounded-xl border-2 transition-all ${newFixed.category === cat.label ? 'border-nubank-light bg-nubank-light/5' : 'border-transparent bg-gray-50 hover:bg-gray-100'}`}
+                      className={(newFixed.category === cat.label ? 'border-[#7C3AED] bg-purple-50' : 'border-transparent bg-gray-50 hover:bg-gray-100') + ' flex flex-col items-center gap-1 p-2 rounded-xl border-2 transition-all'}
                     >
                       <span className="text-xl">{cat.icon}</span>
                       <span className="text-xs text-center leading-tight">{cat.label}</span>
@@ -1139,10 +1164,9 @@ const Dashboard = () => {
                   ))}
                 </div>
               </div>
-
               <button
                 type="submit"
-                className="w-full bg-nubank-light text-white font-bold py-4 rounded-full mt-2 hover:bg-nubank-dark transition-colors"
+                className="w-full bg-gradient-to-r from-[#7C3AED] to-[#6D28D9] text-white font-bold py-4 rounded-full mt-2 hover:from-[#6D28D9] hover:to-[#5B21B6] transition-colors"
               >
                 Adicionar Gasto Fixo
               </button>
