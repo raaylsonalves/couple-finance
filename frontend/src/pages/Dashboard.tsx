@@ -53,19 +53,6 @@ const PALETTE = [
   '#84CC16', '#6366F1', '#D946EF', '#0EA5E9', '#EAB308',
 ];
 
-const STORAGE_KEY = 'custom_categories';
-
-function loadCustomCategories(): CategoryMeta[] {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    return raw ? JSON.parse(raw) : [];
-  } catch { return []; }
-}
-
-function saveCustomCategories(cats: CategoryMeta[]) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(cats));
-}
-
 function getCategoryColors(custom: CategoryMeta[]): Record<string, string> {
   const colors = { ...DEFAULT_COLORS };
   custom.forEach((c, i) => { colors[c.label] = PALETTE[i % PALETTE.length]; });
@@ -108,6 +95,12 @@ const Dashboard = () => {
   const [showFixedModal, setShowFixedModal] = useState(false);
   const [fixedTotal, setFixedTotal] = useState(0);
   const [newFixed, setNewFixed] = useState<NewFixedExpense>({ description: '', amount: '', category: 'Outros' });
+  const [showEditFixedModal, setShowEditFixedModal] = useState(false);
+  const [editingFixed, setEditingFixed] = useState<FixedExpense | null>(null);
+  const [editFixedAmount, setEditFixedAmount] = useState('');
+  const [editFixedDesc, setEditFixedDesc] = useState('');
+  const [editFixedCat, setEditFixedCat] = useState('Outros');
+  const [editFixedParcels, setEditFixedParcels] = useState('');
 
   const [newExpense, setNewExpense] = useState<NewExpense>({ description: '', amount: '', category: 'Outros', is_outing: false, is_credit: false });
 
@@ -127,17 +120,13 @@ const Dashboard = () => {
   const [importResult, setImportResult] = useState<{ bankName: string; count: number; error?: string } | null>(null);
   const [importing, setImporting] = useState(false);
   const [importIsCredit, setImportIsCredit] = useState(false);
-  const [customCategories, setCustomCategories] = useState<CategoryMeta[]>(loadCustomCategories);
+  const [customCategories, setCustomCategories] = useState<CategoryMeta[]>([]);
   const [showCategoryModal, setShowCategoryModal] = useState(false);
   const [newCategoryLabel, setNewCategoryLabel] = useState('');
   const [newCategoryEmoji, setNewCategoryEmoji] = useState('');
   const [editingCategoryIndex, setEditingCategoryIndex] = useState<number | null>(null);
   const txRefreshRef = useRef(0);
   const fixedRefreshRef = useRef(0);
-
-  useEffect(() => {
-    saveCustomCategories(customCategories);
-  }, [customCategories]);
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -224,7 +213,40 @@ const Dashboard = () => {
     };
 
     fetchProfile();
+    fetchCategories();
   }, [user]);
+
+  const fetchCategories = async () => {
+    if (!user) return;
+    const { data } = await supabase
+      .from('categories')
+      .select('label, icon')
+      .eq('user_id', user.id);
+    if (data) {
+      setCustomCategories(data.map(c => ({ label: c.label, icon: c.icon, color: 'bg-gray-100 text-gray-700' })));
+    }
+  };
+
+  const handleAddCategory = async (label: string, icon: string) => {
+    if (!user) return;
+    const existing = getAllCategories(customCategories);
+    if (existing.some(c => c.label.toLowerCase() === label.trim().toLowerCase())) {
+      alert('Já existe uma categoria com esse nome.');
+      return;
+    }
+    const { error } = await supabase.from('categories').insert([{ user_id: user.id, label: label.trim(), icon }]);
+    if (error) { alert('Erro ao criar categoria: ' + error.message); return; }
+    setNewCategoryLabel('');
+    setNewCategoryEmoji(EMOJIS[0]);
+    await fetchCategories();
+  };
+
+  const handleDeleteCategory = async (label: string) => {
+    if (!user) return;
+    const { error } = await supabase.from('categories').delete().eq('user_id', user.id).eq('label', label);
+    if (error) { alert('Erro ao excluir categoria: ' + error.message); return; }
+    await fetchCategories();
+  };
 
   const fetchFixedExpenses = async () => {
     if (!user) return;
@@ -485,12 +507,21 @@ const Dashboard = () => {
     const amount = parseFloat(newFixed.amount.replace(',', '.'));
     if (isNaN(amount) || amount <= 0 || !newFixed.description.trim()) return;
 
-    const { error } = await supabase.from('fixed_expenses').insert([{
+    const insertData: Record<string, unknown> = {
       user_id: user?.id,
       description: newFixed.description.trim(),
       amount,
       category: newFixed.category,
-    }]);
+    };
+    if (newFixed.total_parcels) {
+      const tp = parseInt(newFixed.total_parcels);
+      if (tp > 0) {
+        insertData.total_parcels = tp;
+        insertData.paid_parcels = 1;
+      }
+    }
+
+    const { error } = await supabase.from('fixed_expenses').insert([insertData]);
 
     if (error) { alert('Erro ao adicionar gasto fixo: ' + error.message); return; }
 
@@ -503,6 +534,42 @@ const Dashboard = () => {
     if (!window.confirm('Excluir este gasto fixo?')) return;
     const { error } = await supabase.from('fixed_expenses').delete().eq('id', id);
     if (error) { alert('Erro ao excluir: ' + error.message); return; }
+    await fetchFixedExpenses();
+  };
+
+  const handleStartEditFixed = (f: FixedExpense) => {
+    setEditingFixed(f);
+    setEditFixedDesc(f.description);
+    setEditFixedAmount(String(f.amount));
+    setEditFixedCat(f.category);
+    setEditFixedParcels(f.total_parcels ? String(f.total_parcels) : '');
+    setShowEditFixedModal(true);
+  };
+
+  const handleSaveEditFixed = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingFixed) return;
+    const amount = parseFloat(editFixedAmount.replace(',', '.'));
+    if (isNaN(amount) || amount <= 0 || !editFixedDesc.trim()) return;
+
+    const updateData: Record<string, unknown> = {
+      description: editFixedDesc.trim(),
+      amount,
+      category: editFixedCat,
+    };
+    if (editFixedParcels) {
+      const tp = parseInt(editFixedParcels);
+      if (tp > 0) updateData.total_parcels = tp;
+    } else {
+      updateData.total_parcels = null;
+      updateData.paid_parcels = null;
+    }
+
+    const { error } = await supabase.from('fixed_expenses').update(updateData).eq('id', editingFixed.id);
+    if (error) { alert('Erro ao editar: ' + error.message); return; }
+
+    setShowEditFixedModal(false);
+    setEditingFixed(null);
     await fetchFixedExpenses();
   };
 
@@ -911,6 +978,7 @@ const Dashboard = () => {
             <div className="space-y-1.5">
               {fixedExpenses.map(f => {
                 const cat = getCategoryMeta(f.category, customCategories);
+                const hasParcels = f.total_parcels && f.total_parcels > 0;
                 return (
                   <div key={f.id} className="flex items-center gap-3 py-2 border-b border-gray-50 last:border-0">
                     <div className={'w-8 h-8 rounded-full flex items-center justify-center text-sm shrink-0 ' + cat.color}>
@@ -918,12 +986,22 @@ const Dashboard = () => {
                     </div>
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-semibold text-gray-900 truncate">{f.description}</p>
-                      <p className="text-xs text-gray-500">{cat.label}</p>
+                      <div className="flex items-center gap-2">
+                        <p className="text-xs text-gray-500">{cat.label}</p>
+                        {hasParcels && (
+                          <span className="text-[10px] bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded-full font-medium">
+                            {(f.paid_parcels || 0)}/{f.total_parcels}
+                          </span>
+                        )}
+                      </div>
                     </div>
-                    <div className="flex items-center gap-2 shrink-0">
+                    <div className="flex items-center gap-1 shrink-0">
                       <p className="font-bold text-red-500 text-sm">
                         -R$ {(Number(f.amount) || 0).toFixed(2).replace('.', ',')}
                       </p>
+                      <button onClick={() => handleStartEditFixed(f)} className="text-gray-300 hover:text-purple-400 transition-colors" title="Editar">
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
+                      </button>
                       <button onClick={() => handleDeleteFixed(f.id)} className="text-gray-300 hover:text-red-400 transition-colors" title="Excluir">
                         <Trash2 className="w-4 h-4" />
                       </button>
@@ -1223,11 +1301,128 @@ const Dashboard = () => {
                   ))}
                 </div>
               </div>
+              <div className="flex items-center gap-3 bg-purple-50 p-3 rounded-xl border border-purple-200">
+                <input
+                  type="checkbox"
+                  id="fixed_has_parcels"
+                  checked={!!newFixed.total_parcels}
+                  onChange={(e) => setNewFixed({ ...newFixed, total_parcels: e.target.checked ? '1' : '' })}
+                  className="w-5 h-5 text-[#7C3AED] rounded bg-white"
+                />
+                <label htmlFor="fixed_has_parcels" className="text-sm font-semibold text-gray-900 cursor-pointer flex-1">
+                  Tem parcelas?
+                </label>
+              </div>
+              {newFixed.total_parcels && (
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-1">Total de Parcelas</label>
+                  <input
+                    type="number"
+                    min="1"
+                    required
+                    placeholder="Ex: 48"
+                    value={newFixed.total_parcels}
+                    onChange={(e) => setNewFixed({ ...newFixed, total_parcels: e.target.value })}
+                    className="w-full bg-gray-50 p-4 rounded-xl text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#7C3AED]"
+                  />
+                </div>
+              )}
               <button
                 type="submit"
                 className="w-full bg-gradient-to-r from-[#7C3AED] to-[#6D28D9] text-white font-bold py-4 rounded-full mt-2 hover:from-[#6D28D9] hover:to-[#5B21B6] transition-colors"
               >
                 Adicionar Gasto Fixo
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Fixed Expense Modal */}
+      {showEditFixedModal && editingFixed && (
+        <div className="fixed inset-0 bg-black/60 flex items-end sm:items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-t-2xl sm:rounded-2xl w-full max-w-md p-6">
+            <div className="flex justify-between items-center mb-6">
+              <h3 className="text-xl font-bold text-gray-900">Editar Gasto Fixo</h3>
+              <button onClick={() => { setShowEditFixedModal(false); setEditingFixed(null); }} className="text-gray-500 hover:text-gray-900">
+                <X className="w-6 h-6" />
+              </button>
+            </div>
+            <form onSubmit={handleSaveEditFixed} className="space-y-4">
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-1">Descrição</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="Ex: Aluguel"
+                  value={editFixedDesc}
+                  onChange={(e) => setEditFixedDesc(e.target.value)}
+                  className="w-full bg-gray-50 p-4 rounded-xl text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#7C3AED]"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-1">Valor</label>
+                <div className="relative">
+                  <span className="absolute left-4 top-4 text-gray-500 font-semibold">R$</span>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0.01"
+                    required
+                    placeholder="0,00"
+                    value={editFixedAmount}
+                    onChange={(e) => setEditFixedAmount(e.target.value)}
+                    className="w-full bg-gray-50 p-4 pl-12 rounded-xl text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#7C3AED]"
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-2">Categoria</label>
+                <div className="grid grid-cols-4 gap-2">
+                  {getAllCategories(customCategories).map(cat => (
+                    <button
+                      key={cat.label}
+                      type="button"
+                      onClick={() => setEditFixedCat(cat.label)}
+                      className={(editFixedCat === cat.label ? 'border-[#7C3AED] bg-purple-50' : 'border-transparent bg-gray-50 hover:bg-gray-100') + ' flex flex-col items-center gap-1 p-2 rounded-xl border-2 transition-all'}
+                    >
+                      <span className="text-xl">{cat.icon}</span>
+                      <span className="text-xs text-center leading-tight">{cat.label}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="flex items-center gap-3 bg-purple-50 p-3 rounded-xl border border-purple-200">
+                <input
+                  type="checkbox"
+                  id="edit_fixed_has_parcels"
+                  checked={!!editFixedParcels}
+                  onChange={(e) => setEditFixedParcels(e.target.checked ? String(editingFixed.total_parcels || 1) : '')}
+                  className="w-5 h-5 text-[#7C3AED] rounded bg-white"
+                />
+                <label htmlFor="edit_fixed_has_parcels" className="text-sm font-semibold text-gray-900 cursor-pointer flex-1">
+                  Tem parcelas?
+                </label>
+              </div>
+              {editFixedParcels && (
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-1">Total de Parcelas</label>
+                  <input
+                    type="number"
+                    min="1"
+                    required
+                    placeholder="Ex: 48"
+                    value={editFixedParcels}
+                    onChange={(e) => setEditFixedParcels(e.target.value)}
+                    className="w-full bg-gray-50 p-4 rounded-xl text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#7C3AED]"
+                  />
+                </div>
+              )}
+              <button
+                type="submit"
+                className="w-full bg-gradient-to-r from-[#7C3AED] to-[#6D28D9] text-white font-bold py-4 rounded-full mt-2 hover:from-[#6D28D9] hover:to-[#5B21B6] transition-colors"
+              >
+                Salvar Alterações
               </button>
             </form>
           </div>
@@ -1256,10 +1451,7 @@ const Dashboard = () => {
                       <span className="text-sm font-medium text-gray-900">{cat.label}</span>
                     </div>
                     <button
-                      onClick={() => {
-                        const updated = customCategories.filter((_, i) => i !== idx);
-                        setCustomCategories(updated);
-                      }}
+                      onClick={() => handleDeleteCategory(cat.label)}
                       className="text-red-400 hover:text-red-600 transition-colors"
                     >
                       <Trash2 className="w-4 h-4" />
@@ -1299,22 +1491,7 @@ const Dashboard = () => {
                 </div>
                 <div className="flex gap-2">
                   <button
-                    onClick={() => {
-                      if (!newCategoryLabel.trim()) return;
-                      const existing = getAllCategories(customCategories);
-                      if (existing.some(c => c.label.toLowerCase() === newCategoryLabel.trim().toLowerCase())) {
-                        alert('Já existe uma categoria com esse nome.');
-                        return;
-                      }
-                      const newCat: CategoryMeta = {
-                        label: newCategoryLabel.trim(),
-                        icon: newCategoryEmoji,
-                        color: 'bg-gray-100 text-gray-700',
-                      };
-                      setCustomCategories(prev => [...prev, newCat]);
-                      setNewCategoryLabel('');
-                      setNewCategoryEmoji(EMOJIS[0]);
-                    }}
+                    onClick={() => handleAddCategory(newCategoryLabel, newCategoryEmoji)}
                     disabled={!newCategoryLabel.trim()}
                     className="flex-1 bg-[#7C3AED] text-white font-semibold py-3 rounded-xl text-sm hover:bg-[#6D28D9] transition-colors disabled:opacity-50"
                   >

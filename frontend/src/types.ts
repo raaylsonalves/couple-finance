@@ -33,6 +33,8 @@ export interface FixedExpense {
   description: string;
   amount: number;
   category: string;
+  total_parcels?: number;
+  paid_parcels?: number;
   created_at: string;
 }
 
@@ -40,6 +42,7 @@ export interface NewFixedExpense {
   description: string;
   amount: string;
   category: string;
+  total_parcels?: string;
 }
 
 export interface CategoryMeta {
