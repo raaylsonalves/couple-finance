@@ -1,21 +1,22 @@
 import { useState, useEffect, useRef, type ChangeEvent } from 'react';
 
-interface BeforeInstallPromptEvent extends Event {
-  prompt: () => void;
-  userChoice: Promise<{ outcome: 'accepted' | 'dismissed' }>;
-}
 import { useAuth } from '../contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { requestNotificationPermission } from '../lib/firebase';
 import { isSupported } from 'firebase/messaging';
 import {
-  Loader2, X, Bell, BellRing, LogOut, Heart, Trash2,
+  Loader2, Bell, BellRing, LogOut, Heart, Trash2,
   Users, User as UserIcon, Upload
 } from 'lucide-react';
 import { parseCSV } from '../lib/csvParser';
+import { formatBRL } from '../lib/format';
 import type { Transaction, Profile, NewExpense, FixedExpense, NewFixedExpense, CategoryMeta } from '../types';
 import { DonutChart } from '../components/DonutChart';
+import { Modal } from '../components/Modal';
+import { CurrencyInput } from '../components/CurrencyInput';
+import { CategoryPicker } from '../components/CategoryPicker';
+import { PrimaryButton } from '../components/PrimaryButton';
 
 const DEFAULT_CATEGORIES: CategoryMeta[] = [
   { label: 'Alimentação', icon: '🍔', color: 'bg-orange-100 text-orange-700' },
@@ -127,7 +128,6 @@ const Dashboard = () => {
   const [showCategoryModal, setShowCategoryModal] = useState(false);
   const [newCategoryLabel, setNewCategoryLabel] = useState('');
   const [newCategoryEmoji, setNewCategoryEmoji] = useState('');
-  const [editingCategoryIndex, setEditingCategoryIndex] = useState<number | null>(null);
   const txRefreshRef = useRef(0);
   const fixedRefreshRef = useRef(0);
 
@@ -154,11 +154,23 @@ const Dashboard = () => {
   const handleInstall = async () => {
     const ip = (window as unknown as Record<string, { prompt: Event | null; clear: () => void }>).__installPrompt;
     if (!ip || !ip.prompt) return;
-    (ip.prompt as BeforeInstallPromptEvent).prompt();
-    const result = await (ip.prompt as BeforeInstallPromptEvent).userChoice;
+    type InstallPromptEvent = Event & { prompt: () => void; userChoice: Promise<{ outcome: 'accepted' | 'dismissed' }> };
+    (ip.prompt as InstallPromptEvent).prompt();
+    const result = await (ip.prompt as InstallPromptEvent).userChoice;
     if (result.outcome === 'accepted') {
       setShowInstallBanner(false);
       ip.clear();
+    }
+  };
+
+  const fetchCategories = async () => {
+    if (!user) return;
+    const { data } = await supabase
+      .from('categories')
+      .select('label, icon')
+      .eq('user_id', user.id);
+    if (data) {
+      setCustomCategories(data.map(c => ({ label: c.label, icon: c.icon, color: 'bg-gray-100 text-gray-700' })));
     }
   };
 
@@ -218,17 +230,6 @@ const Dashboard = () => {
     fetchProfile();
     fetchCategories();
   }, [user]);
-
-  const fetchCategories = async () => {
-    if (!user) return;
-    const { data } = await supabase
-      .from('categories')
-      .select('label, icon')
-      .eq('user_id', user.id);
-    if (data) {
-      setCustomCategories(data.map(c => ({ label: c.label, icon: c.icon, color: 'bg-gray-100 text-gray-700' })));
-    }
-  };
 
   const handleAddCategory = async (label: string, icon: string) => {
     if (!user) return;
@@ -540,21 +541,6 @@ const Dashboard = () => {
     await fetchFixedExpenses();
   };
 
-  const handleAdvanceParcel = async (f: FixedExpense) => {
-    const next = (f.paid_parcels || 1) + 1;
-    if (next > (f.total_parcels || 0)) {
-      if (window.confirm('Última parcela! Deseja marcar este gasto como concluído e removê-lo da lista?')) {
-        const { error } = await supabase.from('fixed_expenses').delete().eq('id', f.id);
-        if (error) alert('Erro: ' + error.message);
-        await fetchFixedExpenses();
-      }
-      return;
-    }
-    const { error } = await supabase.from('fixed_expenses').update({ paid_parcels: next }).eq('id', f.id);
-    if (error) { alert('Erro ao adiantar parcela: ' + error.message); return; }
-    await fetchFixedExpenses();
-  };
-
   const handleStartEditFixed = (f: FixedExpense) => {
     setEditingFixed(f);
     setEditFixedDesc(f.description);
@@ -751,7 +737,7 @@ const Dashboard = () => {
                             Salvar Renda
                           </button>
                         )}
-                        {savedIncome > 0 && <p className="text-xs font-semibold text-green-600 mt-1">Registrado: R$ {savedIncome.toFixed(2).replace('.', ',')}</p>}
+                        {savedIncome > 0 && <p className="text-xs font-semibold text-green-600 mt-1">Registrado: {formatBRL(savedIncome)}</p>}
                       </div>
                     </div>
                     <button
@@ -785,14 +771,14 @@ const Dashboard = () => {
                     <span className="text-sm text-gray-600">{seg.label}</span>
                   </div>
                   <span className="text-sm font-semibold text-gray-900">
-                    R$ {seg.value.toFixed(2).replace('.', ',')}
+                    {formatBRL(seg.value)}
                   </span>
                 </div>
               ))
             )}
           </div>
           <button
-            onClick={() => { setNewCategoryLabel(''); setNewCategoryEmoji(EMOJIS[0]); setEditingCategoryIndex(null); setShowCategoryModal(true); }}
+            onClick={() => { setNewCategoryLabel(''); setNewCategoryEmoji(EMOJIS[0]); setShowCategoryModal(true); }}
             className="mt-3 w-full text-xs text-[#7C3AED] font-semibold hover:text-[#6D28D9] transition-colors"
           >
             + Gerenciar Categorias
@@ -803,16 +789,16 @@ const Dashboard = () => {
         <div className="mx-4 grid grid-cols-3 gap-3 mb-4">
           <div className="bg-white rounded-xl shadow-sm p-3">
             <p className="text-[10px] text-gray-400 mb-0.5">Total</p>
-            <p className="text-base font-bold text-gray-900">R$ {shownTotal.toFixed(2).replace('.', ',')}</p>
+            <p className="text-base font-bold text-gray-900">{formatBRL(shownTotal)}</p>
           </div>
           <div className="bg-white rounded-xl shadow-sm p-3">
             <p className="text-[10px] text-gray-400 mb-0.5">Renda Líq.</p>
-            <p className="text-base font-bold text-green-600">R$ {liquidIncome.toFixed(2).replace('.', ',')}</p>
+            <p className="text-base font-bold text-green-600">{formatBRL(liquidIncome)}</p>
           </div>
           <div className="bg-white rounded-xl shadow-sm p-3">
             <p className="text-[10px] text-gray-400 mb-0.5">Saldo</p>
             <p className="text-base font-bold" style={{ color: finalBalance >= 0 ? '#16A34A' : '#DC2626' }}>
-              R$ {finalBalance.toFixed(2).replace('.', ',')}
+              {formatBRL(finalBalance)}
             </p>
           </div>
         </div>
@@ -853,9 +839,9 @@ const Dashboard = () => {
               <button onClick={() => setShowBudgetInput(v => !v)} className="text-[10px] text-[#7C3AED] font-semibold">Editar</button>
             </div>
             <div className="flex justify-between text-xs text-gray-600 mb-1.5">
-              <span>R$ {budgetUsed.toFixed(2).replace('.', ',')} / R$ {savedBudget.toFixed(2).replace('.', ',')}</span>
+              <span>{formatBRL(budgetUsed)} / {formatBRL(savedBudget)}</span>
               <span className={'font-bold ' + (budgetRemaining! < 0 ? 'text-red-500' : 'text-green-600')}>
-                {budgetRemaining! < 0 ? '-' : ''}R$ {Math.abs(budgetRemaining!).toFixed(2).replace('.', ',')}
+                {budgetRemaining! < 0 ? '-' : ''}{formatBRL(Math.abs(budgetRemaining!))}
               </span>
             </div>
             <div className="w-full bg-gray-100 rounded-full h-2">
@@ -975,11 +961,11 @@ const Dashboard = () => {
         {totalIncome > 0 && (
           <div className="mx-4 mb-4 flex gap-2 items-center flex-wrap">
             <span className="text-xs bg-white px-2.5 py-1 rounded-lg shadow-sm text-gray-700 font-medium">
-              Renda: R$ {totalIncome.toFixed(2).replace('.', ',')}
+              Renda: {formatBRL(totalIncome)}
             </span>
             {fixedTotal > 0 && (
               <span className="text-xs bg-red-50 text-red-700 px-2.5 py-1 rounded-lg shadow-sm font-medium">
-                Fixos: -R$ {fixedTotal.toFixed(2).replace('.', ',')}
+                Fixos: -{formatBRL(fixedTotal)}
               </span>
             )}
           </div>
@@ -989,7 +975,7 @@ const Dashboard = () => {
         <div className="mx-4 bg-white rounded-xl shadow-sm p-4 mb-4">
           <div className="flex justify-between items-center mb-3">
             <p className="text-sm font-semibold text-gray-900">
-              Gastos Fixos {fixedTotal > 0 && <span className="text-red-500 font-bold">R$ {fixedTotal.toFixed(2).replace('.', ',')}</span>}
+              Gastos Fixos {fixedTotal > 0 && <span className="text-red-500 font-bold">{formatBRL(fixedTotal)}</span>}
             </p>
             <button onClick={() => setShowFixedModal(true)} className="text-xs text-[#7C3AED] font-bold hover:underline">
               + Adicionar
@@ -1021,7 +1007,7 @@ const Dashboard = () => {
                     </div>
                     <div className="flex items-center gap-1 shrink-0">
                       <p className="font-bold text-red-500 text-sm">
-                        -R$ {(Number(f.amount) || 0).toFixed(2).replace('.', ',')}
+                        -{formatBRL(Number(f.amount) || 0)}
                       </p>
                       <button onClick={() => handleStartEditFixed(f)} className="text-gray-300 hover:text-purple-400 transition-colors" title="Editar">
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
@@ -1098,7 +1084,7 @@ const Dashboard = () => {
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
                       <p className="font-bold text-red-500 text-sm">
-                        - R$ {(Number(t.amount) || 0).toFixed(2).replace('.', ',')}
+                        - {formatBRL(Number(t.amount) || 0)}
                       </p>
                       {isOwn && (
                         <button onClick={() => handleDeleteExpense(t.id)} className="text-gray-300 hover:text-red-400 transition-colors" title="Excluir">
@@ -1122,437 +1108,309 @@ const Dashboard = () => {
         + Novo Gasto
       </button>
 
-      {/* Add Expense Modal */}
-      {showAddModal && (
-        <div className="fixed inset-0 bg-black/60 flex items-end sm:items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-t-2xl sm:rounded-2xl w-full max-w-md p-6">
-            <div className="flex justify-between items-center mb-6">
-              <h3 className="text-xl font-bold text-gray-900">Novo Gasto</h3>
-              <button onClick={() => setShowAddModal(false)} className="text-gray-500 hover:text-gray-900">
-                <X className="w-6 h-6" />
-              </button>
-            </div>
-            <form onSubmit={handleAddExpense} className="space-y-4">
-              <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-1">Descrição</label>
-                <input
-                  type="text"
-                  required
-                  placeholder="Ex: Mercado"
-                  value={newExpense.description}
-                  onChange={(e) => setNewExpense({ ...newExpense, description: e.target.value })}
-                  className="w-full bg-gray-50 p-4 rounded-xl text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#7C3AED]"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-1">Valor</label>
-                <div className="relative">
-                  <span className="absolute left-4 top-4 text-gray-500 font-semibold">R$</span>
-                  <input
-                    type="number"
-                    step="0.01"
-                    min="0.01"
-                    required
-                    placeholder="0,00"
-                    value={newExpense.amount}
-                    onChange={(e) => setNewExpense({ ...newExpense, amount: e.target.value })}
-                    className="w-full bg-gray-50 p-4 pl-12 rounded-xl text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#7C3AED]"
-                  />
-                </div>
-              </div>
-              <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-2">Categoria</label>
-                <div className="grid grid-cols-4 gap-2">
-                  {getAllCategories(customCategories).map(cat => (
-                    <button
-                      key={cat.label}
-                      type="button"
-                      onClick={() => setNewExpense({ ...newExpense, category: cat.label })}
-                      className={(newExpense.category === cat.label ? 'border-[#7C3AED] bg-purple-50' : 'border-transparent bg-gray-50 hover:bg-gray-100') + ' flex flex-col items-center gap-1 p-2 rounded-xl border-2 transition-all'}
-                    >
-                      <span className="text-xl">{cat.icon}</span>
-                      <span className="text-xs text-center leading-tight">{cat.label}</span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-              <div className="flex gap-4 mb-4">
-                <div className="flex-1 flex items-center gap-3 bg-purple-50 p-4 rounded-xl border border-purple-200">
-                  <input
-                    type="checkbox"
-                    id="is_outing_checkbox"
-                    checked={newExpense.is_outing}
-                    onChange={(e) => setNewExpense({ ...newExpense, is_outing: e.target.checked })}
-                    className="w-5 h-5 text-[#7C3AED] rounded bg-white"
-                  />
-                  <label htmlFor="is_outing_checkbox" className="text-sm font-semibold text-gray-900 cursor-pointer">Limite Saídas?</label>
-                </div>
-                <div className="flex-1 flex items-center gap-3 bg-purple-50 p-4 rounded-xl border border-purple-200">
-                  <input
-                    type="checkbox"
-                    id="is_credit_checkbox"
-                    checked={newExpense.is_credit}
-                    onChange={(e) => setNewExpense({ ...newExpense, is_credit: e.target.checked })}
-                    className="w-5 h-5 text-[#7C3AED] rounded bg-white"
-                  />
-                  <label htmlFor="is_credit_checkbox" className="text-sm font-semibold text-gray-900 cursor-pointer">Foi no Crédito?</label>
-                </div>
-              </div>
-              <button
-                type="submit"
-                disabled={isSubmitting}
-                className="w-full bg-gradient-to-r from-[#7C3AED] to-[#6D28D9] text-white font-bold py-4 rounded-full mt-2 hover:from-[#6D28D9] hover:to-[#5B21B6] transition-colors flex justify-center disabled:opacity-70"
-              >
-                {isSubmitting ? <Loader2 className="w-5 h-5 animate-spin" /> : 'Confirmar Gasto'}
-              </button>
-            </form>
+      <Modal open={showAddModal} title="Novo Gasto" onClose={() => setShowAddModal(false)}>
+        <form onSubmit={handleAddExpense} className="space-y-4">
+          <div>
+            <label className="block text-sm font-semibold text-gray-700 mb-1">Descrição</label>
+            <input
+              type="text"
+              required
+              placeholder="Ex: Mercado"
+              value={newExpense.description}
+              onChange={(e) => setNewExpense({ ...newExpense, description: e.target.value })}
+              className="w-full bg-gray-50 p-4 rounded-xl text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#7C3AED]"
+            />
           </div>
-        </div>
-      )}
-
-      {/* Import CSV Modal */}
-      {showImportModal && (
-        <div className="fixed inset-0 bg-black/60 flex items-end sm:items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-t-2xl sm:rounded-2xl w-full max-w-md p-6">
-            <div className="flex justify-between items-center mb-6">
-              <h3 className="text-xl font-bold text-gray-900">Importar Extrato</h3>
-              <button onClick={() => { setShowImportModal(false); setImportResult(null); setImportIsCredit(false); }} className="text-gray-500 hover:text-gray-900">
-                <X className="w-6 h-6" />
-              </button>
+          <div>
+            <label className="block text-sm font-semibold text-gray-700 mb-1">Valor</label>
+            <CurrencyInput value={newExpense.amount} onChange={(v) => setNewExpense({ ...newExpense, amount: v })} />
+          </div>
+          <div>
+            <label className="block text-sm font-semibold text-gray-700 mb-2">Categoria</label>
+            <CategoryPicker
+              categories={getAllCategories(customCategories)}
+              selected={newExpense.category}
+              onChange={(label) => setNewExpense({ ...newExpense, category: label })}
+            />
+          </div>
+          <div className="flex gap-4 mb-4">
+            <div className="flex-1 flex items-center gap-3 bg-purple-50 p-4 rounded-xl border border-purple-200">
+              <input
+                type="checkbox"
+                id="is_outing_checkbox"
+                checked={newExpense.is_outing}
+                onChange={(e) => setNewExpense({ ...newExpense, is_outing: e.target.checked })}
+                className="w-5 h-5 text-[#7C3AED] rounded bg-white"
+              />
+              <label htmlFor="is_outing_checkbox" className="text-sm font-semibold text-gray-900 cursor-pointer">Limite Saídas?</label>
             </div>
-            <div className="space-y-4">
-              <p className="text-sm text-gray-500">Exporte o extrato CSV do seu banco e faça upload aqui. Formatos suportados:</p>
-              <div className="flex gap-2 flex-wrap">
-                <span className="text-xs bg-red-100 text-red-700 px-3 py-1 rounded-full font-semibold">Santander</span>
-                <span className="text-xs bg-orange-100 text-orange-700 px-3 py-1 rounded-full font-semibold">Inter</span>
-                <span className="text-xs bg-blue-100 text-blue-700 px-3 py-1 rounded-full font-semibold">Mercado Pago</span>
-                <span className="text-xs bg-gray-100 text-gray-700 px-3 py-1 rounded-full font-semibold">Outros CSV</span>
-              </div>
-              <label className="block mt-4">
-                <div className={(importing ? 'border-gray-300 bg-gray-50' : 'border-purple-300 hover:border-[#7C3AED] hover:bg-purple-50') + ' border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-colors'}>
-                  {importing ? (
-                    <div className="flex flex-col items-center gap-2">
-                      <Loader2 className="w-8 h-8 animate-spin text-[#7C3AED]" />
-                      <p className="text-sm text-gray-500">Importando...</p>
-                    </div>
-                  ) : (
-                    <div className="flex flex-col items-center gap-2">
-                      <Upload className="w-8 h-8 text-[#7C3AED]" />
-                      <p className="text-sm font-semibold text-gray-900">Clique para selecionar o CSV</p>
-                      <p className="text-xs text-gray-400">ou arraste o arquivo aqui</p>
-                    </div>
-                  )}
+            <div className="flex-1 flex items-center gap-3 bg-purple-50 p-4 rounded-xl border border-purple-200">
+              <input
+                type="checkbox"
+                id="is_credit_checkbox"
+                checked={newExpense.is_credit}
+                onChange={(e) => setNewExpense({ ...newExpense, is_credit: e.target.checked })}
+                className="w-5 h-5 text-[#7C3AED] rounded bg-white"
+              />
+              <label htmlFor="is_credit_checkbox" className="text-sm font-semibold text-gray-900 cursor-pointer">Foi no Crédito?</label>
+            </div>
+          </div>
+          <PrimaryButton disabled={isSubmitting} loading={isSubmitting}>
+            Confirmar Gasto
+          </PrimaryButton>
+        </form>
+      </Modal>
+
+      <Modal open={showImportModal} title="Importar Extrato" onClose={() => { setShowImportModal(false); setImportResult(null); setImportIsCredit(false); }}>
+        <div className="space-y-4">
+          <p className="text-sm text-gray-500">Exporte o extrato CSV do seu banco e faça upload aqui. Formatos suportados:</p>
+          <div className="flex gap-2 flex-wrap">
+            <span className="text-xs bg-red-100 text-red-700 px-3 py-1 rounded-full font-semibold">Santander</span>
+            <span className="text-xs bg-orange-100 text-orange-700 px-3 py-1 rounded-full font-semibold">Inter</span>
+            <span className="text-xs bg-blue-100 text-blue-700 px-3 py-1 rounded-full font-semibold">Mercado Pago</span>
+            <span className="text-xs bg-gray-100 text-gray-700 px-3 py-1 rounded-full font-semibold">Outros CSV</span>
+          </div>
+          <label className="block mt-4">
+            <div className={(importing ? 'border-gray-300 bg-gray-50' : 'border-purple-300 hover:border-[#7C3AED] hover:bg-purple-50') + ' border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-colors'}>
+              {importing ? (
+                <div className="flex flex-col items-center gap-2">
+                  <Loader2 className="w-8 h-8 animate-spin text-[#7C3AED]" />
+                  <p className="text-sm text-gray-500">Importando...</p>
                 </div>
-                <input type="file" accept=".csv,.txt,.ofx" onChange={handleImportCSV} className="hidden" disabled={importing} />
-              </label>
-              <div className="flex items-center gap-3 mt-4 bg-purple-50 p-3 rounded-lg border border-purple-200">
-                <input
-                  type="checkbox"
-                  id="import_is_credit"
-                  checked={importIsCredit}
-                  onChange={(e) => setImportIsCredit(e.target.checked)}
-                  className="w-5 h-5 text-[#7C3AED] rounded bg-white border-purple-300"
-                />
-                <label htmlFor="import_is_credit" className="text-sm font-semibold text-purple-900 cursor-pointer select-none flex-1">
-                  💳 Este extrato é de uma Fatura de Cartão de Crédito?
-                </label>
-              </div>
-              {importResult && (
-                <div className={'p-4 rounded-xl text-sm ' + (importResult.error ? 'bg-red-50 text-red-700' : 'bg-green-50 text-green-700')}>
-                  {importResult.error ? (
-                    <p>❌ Erro: {importResult.error}</p>
-                  ) : (
-                    <p>✅ <strong>{importResult.count}</strong> gastos importados do <strong>{importResult.bankName}</strong>!</p>
-                  )}
+              ) : (
+                <div className="flex flex-col items-center gap-2">
+                  <Upload className="w-8 h-8 text-[#7C3AED]" />
+                  <p className="text-sm font-semibold text-gray-900">Clique para selecionar o CSV</p>
+                  <p className="text-xs text-gray-400">ou arraste o arquivo aqui</p>
                 </div>
               )}
             </div>
+            <input type="file" accept=".csv,.txt,.ofx" onChange={handleImportCSV} className="hidden" disabled={importing} />
+          </label>
+          <div className="flex items-center gap-3 mt-4 bg-purple-50 p-3 rounded-lg border border-purple-200">
+            <input
+              type="checkbox"
+              id="import_is_credit"
+              checked={importIsCredit}
+              onChange={(e) => setImportIsCredit(e.target.checked)}
+              className="w-5 h-5 text-[#7C3AED] rounded bg-white border-purple-300"
+            />
+            <label htmlFor="import_is_credit" className="text-sm font-semibold text-purple-900 cursor-pointer select-none flex-1">
+              💳 Este extrato é de uma Fatura de Cartão de Crédito?
+            </label>
           </div>
-        </div>
-      )}
-
-      {/* Fixed Expense Modal */}
-      {showFixedModal && (
-        <div className="fixed inset-0 bg-black/60 flex items-end sm:items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-t-2xl sm:rounded-2xl w-full max-w-md p-6">
-            <div className="flex justify-between items-center mb-6">
-              <h3 className="text-xl font-bold text-gray-900">Novo Gasto Fixo</h3>
-              <button onClick={() => { setShowFixedModal(false); setNewFixed({ description: '', amount: '', category: 'Outros' }); }} className="text-gray-500 hover:text-gray-900">
-                <X className="w-6 h-6" />
-              </button>
-            </div>
-            <form onSubmit={handleAddFixed} className="space-y-4">
-              <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-1">Descrição</label>
-                <input
-                  type="text"
-                  required
-                  placeholder="Ex: Aluguel"
-                  value={newFixed.description}
-                  onChange={(e) => setNewFixed({ ...newFixed, description: e.target.value })}
-                  className="w-full bg-gray-50 p-4 rounded-xl text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#7C3AED]"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-1">Valor</label>
-                <div className="relative">
-                  <span className="absolute left-4 top-4 text-gray-500 font-semibold">R$</span>
-                  <input
-                    type="number"
-                    step="0.01"
-                    min="0.01"
-                    required
-                    placeholder="0,00"
-                    value={newFixed.amount}
-                    onChange={(e) => setNewFixed({ ...newFixed, amount: e.target.value })}
-                    className="w-full bg-gray-50 p-4 pl-12 rounded-xl text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#7C3AED]"
-                  />
-                </div>
-              </div>
-              <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-2">Categoria</label>
-                <div className="grid grid-cols-4 gap-2">
-                  {getAllCategories(customCategories).map(cat => (
-                    <button
-                      key={cat.label}
-                      type="button"
-                      onClick={() => setNewFixed({ ...newFixed, category: cat.label })}
-                      className={(newFixed.category === cat.label ? 'border-[#7C3AED] bg-purple-50' : 'border-transparent bg-gray-50 hover:bg-gray-100') + ' flex flex-col items-center gap-1 p-2 rounded-xl border-2 transition-all'}
-                    >
-                      <span className="text-xl">{cat.icon}</span>
-                      <span className="text-xs text-center leading-tight">{cat.label}</span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-              <div className="flex items-center gap-3 bg-purple-50 p-3 rounded-xl border border-purple-200">
-                <input
-                  type="checkbox"
-                  id="fixed_has_parcels"
-                  checked={showFixedParcels}
-                  onChange={(e) => {
-                    setShowFixedParcels(e.target.checked);
-                    if (e.target.checked && !newFixed.total_parcels) {
-                      setNewFixed({ ...newFixed, total_parcels: '1' });
-                    }
-                  }}
-                  className="w-5 h-5 text-[#7C3AED] rounded bg-white"
-                />
-                <label htmlFor="fixed_has_parcels" className="text-sm font-semibold text-gray-900 cursor-pointer flex-1">
-                  Tem parcelas?
-                </label>
-              </div>
-              {showFixedParcels && (
-                <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-1">Total de Parcelas</label>
-                  <input
-                    type="number"
-                    min="1"
-                    required
-                    placeholder="Ex: 48"
-                    value={newFixed.total_parcels}
-                    onChange={(e) => setNewFixed({ ...newFixed, total_parcels: e.target.value })}
-                    className="w-full bg-gray-50 p-4 rounded-xl text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#7C3AED]"
-                  />
-                </div>
+          {importResult && (
+            <div className={'p-4 rounded-xl text-sm ' + (importResult.error ? 'bg-red-50 text-red-700' : 'bg-green-50 text-green-700')}>
+              {importResult.error ? (
+                <p>❌ Erro: {importResult.error}</p>
+              ) : (
+                <p>✅ <strong>{importResult.count}</strong> gastos importados do <strong>{importResult.bankName}</strong>!</p>
               )}
-              <button
-                type="submit"
-                className="w-full bg-gradient-to-r from-[#7C3AED] to-[#6D28D9] text-white font-bold py-4 rounded-full mt-2 hover:from-[#6D28D9] hover:to-[#5B21B6] transition-colors"
-              >
-                Adicionar Gasto Fixo
-              </button>
-            </form>
+            </div>
+          )}
+        </div>
+      </Modal>
+
+      <Modal open={showFixedModal} title="Novo Gasto Fixo" onClose={() => { setShowFixedModal(false); setNewFixed({ description: '', amount: '', category: 'Outros' }); }}>
+        <form onSubmit={handleAddFixed} className="space-y-4">
+          <div>
+            <label className="block text-sm font-semibold text-gray-700 mb-1">Descrição</label>
+            <input
+              type="text"
+              required
+              placeholder="Ex: Aluguel"
+              value={newFixed.description}
+              onChange={(e) => setNewFixed({ ...newFixed, description: e.target.value })}
+              className="w-full bg-gray-50 p-4 rounded-xl text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#7C3AED]"
+            />
           </div>
-        </div>
-      )}
-
-      {/* Edit Fixed Expense Modal */}
-      {showEditFixedModal && editingFixed && (
-        <div className="fixed inset-0 bg-black/60 flex items-end sm:items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-t-2xl sm:rounded-2xl w-full max-w-md p-6">
-            <div className="flex justify-between items-center mb-6">
-              <h3 className="text-xl font-bold text-gray-900">Editar Gasto Fixo</h3>
-              <button onClick={() => { setShowEditFixedModal(false); setEditingFixed(null); }} className="text-gray-500 hover:text-gray-900">
-                <X className="w-6 h-6" />
-              </button>
-            </div>
-            <form onSubmit={handleSaveEditFixed} className="space-y-4">
-              <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-1">Descrição</label>
-                <input
-                  type="text"
-                  required
-                  placeholder="Ex: Aluguel"
-                  value={editFixedDesc}
-                  onChange={(e) => setEditFixedDesc(e.target.value)}
-                  className="w-full bg-gray-50 p-4 rounded-xl text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#7C3AED]"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-1">Valor</label>
-                <div className="relative">
-                  <span className="absolute left-4 top-4 text-gray-500 font-semibold">R$</span>
-                  <input
-                    type="number"
-                    step="0.01"
-                    min="0.01"
-                    required
-                    placeholder="0,00"
-                    value={editFixedAmount}
-                    onChange={(e) => setEditFixedAmount(e.target.value)}
-                    className="w-full bg-gray-50 p-4 pl-12 rounded-xl text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#7C3AED]"
-                  />
-                </div>
-              </div>
-              <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-2">Categoria</label>
-                <div className="grid grid-cols-4 gap-2">
-                  {getAllCategories(customCategories).map(cat => (
-                    <button
-                      key={cat.label}
-                      type="button"
-                      onClick={() => setEditFixedCat(cat.label)}
-                      className={(editFixedCat === cat.label ? 'border-[#7C3AED] bg-purple-50' : 'border-transparent bg-gray-50 hover:bg-gray-100') + ' flex flex-col items-center gap-1 p-2 rounded-xl border-2 transition-all'}
-                    >
-                      <span className="text-xl">{cat.icon}</span>
-                      <span className="text-xs text-center leading-tight">{cat.label}</span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-              <div className="flex items-center gap-3 bg-purple-50 p-3 rounded-xl border border-purple-200">
-                <input
-                  type="checkbox"
-                  id="edit_fixed_has_parcels"
-                  checked={showEditParcels}
-                  onChange={(e) => {
-                    setShowEditParcels(e.target.checked);
-                    if (e.target.checked && !editFixedParcels) {
-                      setEditFixedParcels(String(editingFixed.total_parcels || 1));
-                    }
-                    if (!e.target.checked) {
-                      setEditFixedParcels('');
-                    }
-                  }}
-                  className="w-5 h-5 text-[#7C3AED] rounded bg-white"
-                />
-                <label htmlFor="edit_fixed_has_parcels" className="text-sm font-semibold text-gray-900 cursor-pointer flex-1">
-                  Tem parcelas?
-                </label>
-              </div>
-              {showEditParcels && (
-                <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-1">Total de Parcelas</label>
-                  <input
-                    type="number"
-                    min="1"
-                    required
-                    placeholder="Ex: 48"
-                    value={editFixedParcels}
-                    onChange={(e) => setEditFixedParcels(e.target.value)}
-                    className="w-full bg-gray-50 p-4 rounded-xl text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#7C3AED]"
-                  />
-                </div>
-              )}
-              {showEditParcels && (
-                <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-1">Parcelas Pagas</label>
-                  <input
-                    type="number"
-                    min="0"
-                    placeholder="Ex: 3"
-                    value={editFixedPaidParcels}
-                    onChange={(e) => setEditFixedPaidParcels(e.target.value)}
-                    className="w-full bg-gray-50 p-4 rounded-xl text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#7C3AED]"
-                  />
-                </div>
-              )}
-              <button
-                type="submit"
-                className="w-full bg-gradient-to-r from-[#7C3AED] to-[#6D28D9] text-white font-bold py-4 rounded-full mt-2 hover:from-[#6D28D9] hover:to-[#5B21B6] transition-colors"
-              >
-                Salvar Alterações
-              </button>
-            </form>
+          <div>
+            <label className="block text-sm font-semibold text-gray-700 mb-1">Valor</label>
+            <CurrencyInput value={newFixed.amount} onChange={(v) => setNewFixed({ ...newFixed, amount: v })} />
           </div>
-        </div>
-      )}
-
-      {/* Category Management Modal */}
-      {showCategoryModal && (
-        <div className="fixed inset-0 bg-black/60 flex items-end sm:items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-t-2xl sm:rounded-2xl w-full max-w-md p-6">
-            <div className="flex justify-between items-center mb-6">
-              <h3 className="text-xl font-bold text-gray-900">Gerenciar Categorias</h3>
-              <button onClick={() => setShowCategoryModal(false)} className="text-gray-500 hover:text-gray-900">
-                <X className="w-6 h-6" />
-              </button>
+          <div>
+            <label className="block text-sm font-semibold text-gray-700 mb-2">Categoria</label>
+            <CategoryPicker
+              categories={getAllCategories(customCategories)}
+              selected={newFixed.category}
+              onChange={(label) => setNewFixed({ ...newFixed, category: label })}
+            />
+          </div>
+          <div className="flex items-center gap-3 bg-purple-50 p-3 rounded-xl border border-purple-200">
+            <input
+              type="checkbox"
+              id="fixed_has_parcels"
+              checked={showFixedParcels}
+              onChange={(e) => {
+                setShowFixedParcels(e.target.checked);
+                if (e.target.checked && !newFixed.total_parcels) {
+                  setNewFixed({ ...newFixed, total_parcels: '1' });
+                }
+              }}
+              className="w-5 h-5 text-[#7C3AED] rounded bg-white"
+            />
+            <label htmlFor="fixed_has_parcels" className="text-sm font-semibold text-gray-900 cursor-pointer flex-1">
+              Tem parcelas?
+            </label>
+          </div>
+          {showFixedParcels && (
+            <div>
+              <label className="block text-sm font-semibold text-gray-700 mb-1">Total de Parcelas</label>
+              <input
+                type="number"
+                min="1"
+                required
+                placeholder="Ex: 48"
+                value={newFixed.total_parcels}
+                onChange={(e) => setNewFixed({ ...newFixed, total_parcels: e.target.value })}
+                className="w-full bg-gray-50 p-4 rounded-xl text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#7C3AED]"
+              />
             </div>
+          )}
+          <PrimaryButton type="submit">
+            Adicionar Gasto Fixo
+          </PrimaryButton>
+        </form>
+      </Modal>
 
-            {/* Existing custom categories */}
-            {customCategories.length > 0 && (
-              <div className="mb-4 space-y-2">
-                <p className="text-xs text-gray-500 font-semibold">Suas categorias personalizadas:</p>
-                {customCategories.map((cat, idx) => (
-                  <div key={idx} className="flex items-center justify-between bg-gray-50 p-3 rounded-xl">
-                    <div className="flex items-center gap-2">
-                      <span className="text-lg">{cat.icon}</span>
-                      <span className="text-sm font-medium text-gray-900">{cat.label}</span>
-                    </div>
-                    <button
-                      onClick={() => handleDeleteCategory(cat.label)}
-                      className="text-red-400 hover:text-red-600 transition-colors"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  </div>
+      <Modal open={showEditFixedModal && !!editingFixed} title="Editar Gasto Fixo" onClose={() => { setShowEditFixedModal(false); setEditingFixed(null); }}>
+        <form onSubmit={handleSaveEditFixed} className="space-y-4">
+          <div>
+            <label className="block text-sm font-semibold text-gray-700 mb-1">Descrição</label>
+            <input
+              type="text"
+              required
+              placeholder="Ex: Aluguel"
+              value={editFixedDesc}
+              onChange={(e) => setEditFixedDesc(e.target.value)}
+              className="w-full bg-gray-50 p-4 rounded-xl text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#7C3AED]"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-semibold text-gray-700 mb-1">Valor</label>
+            <CurrencyInput value={editFixedAmount} onChange={setEditFixedAmount} />
+          </div>
+          <div>
+            <label className="block text-sm font-semibold text-gray-700 mb-2">Categoria</label>
+            <CategoryPicker
+              categories={getAllCategories(customCategories)}
+              selected={editFixedCat}
+              onChange={setEditFixedCat}
+            />
+          </div>
+          <div className="flex items-center gap-3 bg-purple-50 p-3 rounded-xl border border-purple-200">
+            <input
+              type="checkbox"
+              id="edit_fixed_has_parcels"
+              checked={showEditParcels}
+              onChange={(e) => {
+                setShowEditParcels(e.target.checked);
+                if (e.target.checked && !editFixedParcels) {
+                  setEditFixedParcels(String(editingFixed?.total_parcels || 1));
+                }
+                if (!e.target.checked) {
+                  setEditFixedParcels('');
+                }
+              }}
+              className="w-5 h-5 text-[#7C3AED] rounded bg-white"
+            />
+            <label htmlFor="edit_fixed_has_parcels" className="text-sm font-semibold text-gray-900 cursor-pointer flex-1">
+              Tem parcelas?
+            </label>
+          </div>
+          {showEditParcels && (
+            <div>
+              <label className="block text-sm font-semibold text-gray-700 mb-1">Total de Parcelas</label>
+              <input
+                type="number"
+                min="1"
+                required
+                placeholder="Ex: 48"
+                value={editFixedParcels}
+                onChange={(e) => setEditFixedParcels(e.target.value)}
+                className="w-full bg-gray-50 p-4 rounded-xl text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#7C3AED]"
+              />
+            </div>
+          )}
+          {showEditParcels && (
+            <div>
+              <label className="block text-sm font-semibold text-gray-700 mb-1">Parcelas Pagas</label>
+              <input
+                type="number"
+                min="0"
+                placeholder="Ex: 3"
+                value={editFixedPaidParcels}
+                onChange={(e) => setEditFixedPaidParcels(e.target.value)}
+                className="w-full bg-gray-50 p-4 rounded-xl text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#7C3AED]"
+              />
+            </div>
+          )}
+          <PrimaryButton type="submit">
+            Salvar Alterações
+          </PrimaryButton>
+        </form>
+      </Modal>
+
+      <Modal open={showCategoryModal} title="Gerenciar Categorias" onClose={() => setShowCategoryModal(false)}>
+        {customCategories.length > 0 && (
+          <div className="mb-4 space-y-2">
+            <p className="text-xs text-gray-500 font-semibold">Suas categorias personalizadas:</p>
+            {customCategories.map((cat, idx) => (
+              <div key={idx} className="flex items-center justify-between bg-gray-50 p-3 rounded-xl">
+                <div className="flex items-center gap-2">
+                  <span className="text-lg">{cat.icon}</span>
+                  <span className="text-sm font-medium text-gray-900">{cat.label}</span>
+                </div>
+                <button
+                  onClick={() => handleDeleteCategory(cat.label)}
+                  className="text-red-400 hover:text-red-600 transition-colors"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <div className="border-t border-gray-100 pt-4">
+          <p className="text-sm font-semibold text-gray-700 mb-3">
+            Nova categoria
+          </p>
+          <div className="space-y-3">
+            <input
+              type="text"
+              placeholder="Nome da categoria"
+              value={newCategoryLabel}
+              onChange={e => setNewCategoryLabel(e.target.value)}
+              className="w-full bg-gray-50 p-3 rounded-xl text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#7C3AED]"
+            />
+            <div>
+              <p className="text-xs text-gray-500 mb-2">Escolha um ícone:</p>
+              <div className="flex flex-wrap gap-1.5 max-h-28 overflow-y-auto">
+                {EMOJIS.map(emoji => (
+                  <button
+                    key={emoji}
+                    type="button"
+                    onClick={() => setNewCategoryEmoji(emoji)}
+                    className={'w-9 h-9 flex items-center justify-center text-lg rounded-lg border-2 transition-all ' + (newCategoryEmoji === emoji ? 'border-[#7C3AED] bg-purple-50' : 'border-transparent hover:bg-gray-100')}
+                  >
+                    {emoji}
+                  </button>
                 ))}
               </div>
-            )}
-
-            {/* Add new category form */}
-            <div className="border-t border-gray-100 pt-4">
-              <p className="text-sm font-semibold text-gray-700 mb-3">
-                {editingCategoryIndex !== null ? 'Editar categoria' : 'Nova categoria'}
-              </p>
-              <div className="space-y-3">
-                <input
-                  type="text"
-                  placeholder="Nome da categoria"
-                  value={newCategoryLabel}
-                  onChange={e => setNewCategoryLabel(e.target.value)}
-                  className="w-full bg-gray-50 p-3 rounded-xl text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#7C3AED]"
-                />
-                <div>
-                  <p className="text-xs text-gray-500 mb-2">Escolha um ícone:</p>
-                  <div className="flex flex-wrap gap-1.5 max-h-28 overflow-y-auto">
-                    {EMOJIS.map(emoji => (
-                      <button
-                        key={emoji}
-                        type="button"
-                        onClick={() => setNewCategoryEmoji(emoji)}
-                        className={'w-9 h-9 flex items-center justify-center text-lg rounded-lg border-2 transition-all ' + (newCategoryEmoji === emoji ? 'border-[#7C3AED] bg-purple-50' : 'border-transparent hover:bg-gray-100')}
-                      >
-                        {emoji}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => handleAddCategory(newCategoryLabel, newCategoryEmoji)}
-                    disabled={!newCategoryLabel.trim()}
-                    className="flex-1 bg-[#7C3AED] text-white font-semibold py-3 rounded-xl text-sm hover:bg-[#6D28D9] transition-colors disabled:opacity-50"
-                  >
-                    Adicionar
-                  </button>
-                </div>
-              </div>
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={() => handleAddCategory(newCategoryLabel, newCategoryEmoji)}
+                disabled={!newCategoryLabel.trim()}
+                className="flex-1 bg-[#7C3AED] text-white font-semibold py-3 rounded-xl text-sm hover:bg-[#6D28D9] transition-colors disabled:opacity-50"
+              >
+                Adicionar
+              </button>
             </div>
           </div>
         </div>
-      )}
+      </Modal>
     </div>
   );
 };
