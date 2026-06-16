@@ -537,6 +537,21 @@ const Dashboard = () => {
     await fetchFixedExpenses();
   };
 
+  const handleAdvanceParcel = async (f: FixedExpense) => {
+    const next = (f.paid_parcels || 1) + 1;
+    if (next > (f.total_parcels || 0)) {
+      if (window.confirm('Última parcela! Deseja marcar este gasto como concluído e removê-lo da lista?')) {
+        const { error } = await supabase.from('fixed_expenses').delete().eq('id', f.id);
+        if (error) alert('Erro: ' + error.message);
+        await fetchFixedExpenses();
+      }
+      return;
+    }
+    const { error } = await supabase.from('fixed_expenses').update({ paid_parcels: next }).eq('id', f.id);
+    if (error) { alert('Erro ao adiantar parcela: ' + error.message); return; }
+    await fetchFixedExpenses();
+  };
+
   const handleStartEditFixed = (f: FixedExpense) => {
     setEditingFixed(f);
     setEditFixedDesc(f.description);
@@ -989,8 +1004,17 @@ const Dashboard = () => {
                       <div className="flex items-center gap-2">
                         <p className="text-xs text-gray-500">{cat.label}</p>
                         {hasParcels && (
-                          <span className="text-[10px] bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded-full font-medium">
+                          <span className="flex items-center gap-1 text-[10px] bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded-full font-medium">
                             {(f.paid_parcels || 0)}/{f.total_parcels}
+                            {(f.paid_parcels || 0) < f.total_parcels! && (
+                              <button
+                                onClick={(e) => { e.stopPropagation(); handleAdvanceParcel(f); }}
+                                className="text-purple-500 hover:text-purple-700 font-bold leading-none"
+                                title="Adiantar parcela"
+                              >
+                                +1
+                              </button>
+                            )}
                           </span>
                         )}
                       </div>
