@@ -82,6 +82,10 @@ const Dashboard = () => {
   const profileMenuRef = useRef<HTMLDivElement>(null);
 
   const [viewFilter, setViewFilter] = useState<'mine' | 'couple'>('mine');
+  const [viewMonth, setViewMonth] = useState(() => {
+    const now = new Date();
+    return { year: now.getFullYear(), month: now.getMonth() };
+  });
 
   const [budget, setBudget] = useState('');
   const [savedBudget, setSavedBudget] = useState<number | null>(null);
@@ -622,25 +626,28 @@ const Dashboard = () => {
     }
   };
 
+  const monthNames = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
+  const now = new Date();
+  const isCurrentMonth = viewMonth.month === now.getMonth() && viewMonth.year === now.getFullYear();
+
   const displayName = userDisplayName || user?.email?.split('@')[0] || 'Usuário';
   const partnerName = partnerProfile?.display_name || (partnerProfile?.id ? `${partnerProfile.id.substring(0, 8)}...` : null);
-  const shownTotal = viewFilter === 'couple' ? coupleTotal : myTotal;
-  const budgetUsedPct = savedBudget ? Math.min((budgetUsed / savedBudget) * 100, 100) : 0;
-  const budgetRemaining = savedBudget ? savedBudget - budgetUsed : null;
+  const monthYear = monthNames[viewMonth.month] + ' de ' + viewMonth.year;
 
+  const currentMonthTx = transactions.filter(t => {
+    const d = new Date(t.date);
+    return d.getMonth() === viewMonth.month && d.getFullYear() === viewMonth.year;
+  });
+
+  const shownTotal = viewFilter === 'couple' ? coupleTotal : myTotal;
   const totalIncome = viewFilter === 'couple' ? savedIncome + partnerIncome : savedIncome;
   const liquidIncome = totalIncome - fixedTotal;
   const finalBalance = liquidIncome - shownTotal;
 
-  const monthNames = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
-  const now = new Date();
-  const monthYear = monthNames[now.getMonth()] + ' de ' + now.getFullYear();
+  const budgetUsedPct = savedBudget && isCurrentMonth ? Math.min((budgetUsed / savedBudget) * 100, 100) : 0;
+  const budgetRemaining = savedBudget && isCurrentMonth ? savedBudget - budgetUsed : null;
 
   const catTotalsMap: Record<string, number> = {};
-  const currentMonthTx = transactions.filter(t => {
-    const d = new Date(t.date);
-    return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
-  });
   currentMonthTx.forEach(t => {
     const cat = t.category || 'Outros';
     catTotalsMap[cat] = (catTotalsMap[cat] || 0) + (Number(t.amount) || 0);
@@ -831,8 +838,27 @@ const Dashboard = () => {
           </button>
         </div>
 
+        {/* Month Navigation */}
+        <div className="mx-4 mb-4">
+          <div className="bg-white/80 backdrop-blur-sm rounded-xl shadow-sm border border-gray-100 flex items-center justify-between px-4 py-2">
+            <button
+              onClick={() => setViewMonth(v => ({ year: v.month === 0 ? v.year - 1 : v.year, month: v.month === 0 ? 11 : v.month - 1 }))}
+              className="w-8 h-8 flex items-center justify-center text-gray-500 hover:text-[#7C3AED] hover:bg-purple-50 rounded-lg transition-colors"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
+            </button>
+            <span className="text-sm font-bold text-gray-900 select-none">{monthYear}</span>
+            <button
+              onClick={() => setViewMonth(v => ({ year: v.month === 11 ? v.year + 1 : v.year, month: v.month === 11 ? 0 : v.month + 1 }))}
+              className="w-8 h-8 flex items-center justify-center text-gray-500 hover:text-[#7C3AED] hover:bg-purple-50 rounded-lg transition-colors"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
+            </button>
+          </div>
+        </div>
+
         {/* Budget Section */}
-        {savedBudget !== null ? (
+        {isCurrentMonth && savedBudget !== null ? (
           <div className="mx-4 bg-white rounded-xl shadow-sm p-4 mb-4">
             <div className="flex justify-between items-center mb-2">
               <p className="text-xs text-gray-500">Limite do Mês</p>
@@ -867,7 +893,7 @@ const Dashboard = () => {
               </div>
             )}
           </div>
-        ) : (
+        ) : isCurrentMonth ? (
           <div className="mx-4 bg-white rounded-xl shadow-sm p-4 mb-4">
             <div className="flex items-center justify-between">
               <p className="text-xs text-gray-500">Limite do Mês</p>
@@ -890,7 +916,7 @@ const Dashboard = () => {
               </div>
             )}
           </div>
-        )}
+        ) : null}
 
         {/* Install PWA Banner */}
         {showInstallBanner && (
@@ -1027,9 +1053,9 @@ const Dashboard = () => {
         <section className="mx-4 mb-6">
           <div className="flex justify-between items-center mb-3">
             <h3 className="font-semibold text-sm text-gray-700">
-              {viewFilter === 'couple' ? 'Gastos do Casal' : 'Meus Gastos'}
+              {monthNames[viewMonth.month]}
             </h3>
-            <span className="text-[10px] text-gray-400">{transactions.length} itens</span>
+            <span className="text-[10px] text-gray-400">{currentMonthTx.length} itens</span>
           </div>
 
           {loading ? (
@@ -1045,13 +1071,13 @@ const Dashboard = () => {
                 </div>
               ))}
             </div>
-          ) : transactions.length === 0 ? (
+          ) : currentMonthTx.length === 0 ? (
             <div className="text-center py-10 bg-white rounded-xl shadow-sm">
-              <p className="text-gray-400">Nenhum gasto registrado.</p>
+              <p className="text-gray-400">Nenhum gasto em {monthYear.toLowerCase()}.</p>
             </div>
           ) : (
             <div className="space-y-2">
-              {transactions.map(t => {
+              {currentMonthTx.map(t => {
                 const cat = getCategoryMeta(t.category, customCategories);
                 const isOwn = t.account_id === user?.id;
                 return (
