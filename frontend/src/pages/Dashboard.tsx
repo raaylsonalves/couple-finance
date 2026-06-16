@@ -101,6 +101,9 @@ const Dashboard = () => {
   const [editFixedDesc, setEditFixedDesc] = useState('');
   const [editFixedCat, setEditFixedCat] = useState('Outros');
   const [editFixedParcels, setEditFixedParcels] = useState('');
+  const [editFixedPaidParcels, setEditFixedPaidParcels] = useState('');
+  const [showFixedParcels, setShowFixedParcels] = useState(false);
+  const [showEditParcels, setShowEditParcels] = useState(false);
 
   const [newExpense, setNewExpense] = useState<NewExpense>({ description: '', amount: '', category: 'Outros', is_outing: false, is_credit: false });
 
@@ -513,7 +516,7 @@ const Dashboard = () => {
       amount,
       category: newFixed.category,
     };
-    if (newFixed.total_parcels) {
+    if (showFixedParcels && newFixed.total_parcels) {
       const tp = parseInt(newFixed.total_parcels);
       if (tp > 0) {
         insertData.total_parcels = tp;
@@ -558,6 +561,8 @@ const Dashboard = () => {
     setEditFixedAmount(String(f.amount));
     setEditFixedCat(f.category);
     setEditFixedParcels(f.total_parcels ? String(f.total_parcels) : '');
+    setEditFixedPaidParcels(f.paid_parcels ? String(f.paid_parcels) : '');
+    setShowEditParcels(!!f.total_parcels);
     setShowEditFixedModal(true);
   };
 
@@ -572,9 +577,13 @@ const Dashboard = () => {
       amount,
       category: editFixedCat,
     };
-    if (editFixedParcels) {
+    if (showEditParcels && editFixedParcels) {
       const tp = parseInt(editFixedParcels);
-      if (tp > 0) updateData.total_parcels = tp;
+      if (tp > 0) {
+        updateData.total_parcels = tp;
+        const pp = parseInt(editFixedPaidParcels);
+        updateData.paid_parcels = (!isNaN(pp) && pp > 0) ? pp : 1;
+      }
     } else {
       updateData.total_parcels = null;
       updateData.paid_parcels = null;
@@ -1004,17 +1013,8 @@ const Dashboard = () => {
                       <div className="flex items-center gap-2">
                         <p className="text-xs text-gray-500">{cat.label}</p>
                         {hasParcels && (
-                          <span className="flex items-center gap-1 text-[10px] bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded-full font-medium">
+                          <span className="text-[10px] bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded-full font-medium">
                             {(f.paid_parcels || 0)}/{f.total_parcels}
-                            {(f.paid_parcels || 0) < f.total_parcels! && (
-                              <button
-                                onClick={(e) => { e.stopPropagation(); handleAdvanceParcel(f); }}
-                                className="text-purple-500 hover:text-purple-700 font-bold leading-none"
-                                title="Adiantar parcela"
-                              >
-                                +1
-                              </button>
-                            )}
                           </span>
                         )}
                       </div>
@@ -1329,15 +1329,20 @@ const Dashboard = () => {
                 <input
                   type="checkbox"
                   id="fixed_has_parcels"
-                  checked={!!newFixed.total_parcels}
-                  onChange={(e) => setNewFixed({ ...newFixed, total_parcels: e.target.checked ? '1' : '' })}
+                  checked={showFixedParcels}
+                  onChange={(e) => {
+                    setShowFixedParcels(e.target.checked);
+                    if (e.target.checked && !newFixed.total_parcels) {
+                      setNewFixed({ ...newFixed, total_parcels: '1' });
+                    }
+                  }}
                   className="w-5 h-5 text-[#7C3AED] rounded bg-white"
                 />
                 <label htmlFor="fixed_has_parcels" className="text-sm font-semibold text-gray-900 cursor-pointer flex-1">
                   Tem parcelas?
                 </label>
               </div>
-              {newFixed.total_parcels && (
+              {showFixedParcels && (
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-1">Total de Parcelas</label>
                   <input
@@ -1420,15 +1425,23 @@ const Dashboard = () => {
                 <input
                   type="checkbox"
                   id="edit_fixed_has_parcels"
-                  checked={!!editFixedParcels}
-                  onChange={(e) => setEditFixedParcels(e.target.checked ? String(editingFixed.total_parcels || 1) : '')}
+                  checked={showEditParcels}
+                  onChange={(e) => {
+                    setShowEditParcels(e.target.checked);
+                    if (e.target.checked && !editFixedParcels) {
+                      setEditFixedParcels(String(editingFixed.total_parcels || 1));
+                    }
+                    if (!e.target.checked) {
+                      setEditFixedParcels('');
+                    }
+                  }}
                   className="w-5 h-5 text-[#7C3AED] rounded bg-white"
                 />
                 <label htmlFor="edit_fixed_has_parcels" className="text-sm font-semibold text-gray-900 cursor-pointer flex-1">
                   Tem parcelas?
                 </label>
               </div>
-              {editFixedParcels && (
+              {showEditParcels && (
                 <div>
                   <label className="block text-sm font-semibold text-gray-700 mb-1">Total de Parcelas</label>
                   <input
@@ -1438,6 +1451,19 @@ const Dashboard = () => {
                     placeholder="Ex: 48"
                     value={editFixedParcels}
                     onChange={(e) => setEditFixedParcels(e.target.value)}
+                    className="w-full bg-gray-50 p-4 rounded-xl text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#7C3AED]"
+                  />
+                </div>
+              )}
+              {showEditParcels && (
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-1">Parcelas Pagas</label>
+                  <input
+                    type="number"
+                    min="0"
+                    placeholder="Ex: 3"
+                    value={editFixedPaidParcels}
+                    onChange={(e) => setEditFixedPaidParcels(e.target.value)}
                     className="w-full bg-gray-50 p-4 rounded-xl text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#7C3AED]"
                   />
                 </div>
